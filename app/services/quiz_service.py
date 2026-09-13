@@ -32,6 +32,9 @@ from app.services.ai_provider import (
     AIProviderError,
     get_ai_provider,
 )
+from app.services.analytics_service import (
+    get_subject_topic_mastery,
+)
 from app.services.gamification_service import (
     add_xp,
     evaluate_badges,
@@ -113,6 +116,7 @@ def create_quiz(
 
     try:
         db.commit()
+
     except Exception:
         db.rollback()
         raise
@@ -132,7 +136,6 @@ def _parse_json_object(
 ) -> dict:
     value = text_value.strip()
 
-    # Remove possible Markdown fences.
     value = re.sub(
         r"^```(?:json)?\s*",
         "",
@@ -146,7 +149,6 @@ def _parse_json_object(
         value,
     )
 
-    # Extract JSON object if model added extra text.
     start = value.find("{")
     end = value.rfind("}")
 
@@ -194,11 +196,6 @@ def _normalize_bool(
 def _normalize_question(
     raw: dict,
 ) -> dict:
-    """
-    Normalize common LLM mistakes before
-    Pydantic validation.
-    """
-
     if not isinstance(raw, dict):
         raise ValueError(
             "Every question must be a JSON object"
@@ -217,7 +214,9 @@ def _normalize_question(
         )
 
         if fallback_text:
-            question["question_text"] = fallback_text
+            question["question_text"] = (
+                fallback_text
+            )
 
     # -----------------------------------------------------
     # difficulty
@@ -225,7 +224,9 @@ def _normalize_question(
 
     if question.get("difficulty"):
         question["difficulty"] = (
-            str(question["difficulty"])
+            str(
+                question["difficulty"]
+            )
             .strip()
             .upper()
         )
@@ -246,8 +247,6 @@ def _normalize_question(
             "Question must contain exactly 4 options"
         )
 
-    # Some models put the correct answer
-    # at question level.
     correct_hint = (
         question.get("correct_answer")
         or question.get("correct_option")
@@ -263,8 +262,13 @@ def _normalize_question(
 
     normalized_options: list[dict] = []
 
-    for index, raw_option in enumerate(options):
-        if not isinstance(raw_option, dict):
+    for index, raw_option in enumerate(
+        options
+    ):
+        if not isinstance(
+            raw_option,
+            dict,
+        ):
             raise ValueError(
                 "Every option must be a JSON object"
             )
@@ -283,18 +287,27 @@ def _normalize_question(
             or option.get("label")
         )
 
-        raw_position = option.get("position")
+        raw_position = option.get(
+            "position"
+        )
 
-        # Common Qwen mistake:
+        # Qwen sometimes returns:
         # position = "A"
         if (
             option_key is None
-            and isinstance(raw_position, str)
-            and raw_position.strip().upper()
+            and isinstance(
+                raw_position,
+                str,
+            )
+            and raw_position
+            .strip()
+            .upper()
             in OPTION_KEYS
         ):
             option_key = (
-                raw_position.strip().upper()
+                raw_position
+                .strip()
+                .upper()
             )
 
         if option_key is None:
@@ -308,7 +321,8 @@ def _normalize_question(
 
         if option_key not in OPTION_KEYS:
             raise ValueError(
-                f"Invalid option_key: {option_key}"
+                f"Invalid option_key: "
+                f"{option_key}"
             )
 
         # -------------------------------------------------
@@ -317,15 +331,25 @@ def _normalize_question(
 
         position = raw_position
 
-        if isinstance(position, str):
-            stripped = position.strip()
+        if isinstance(
+            position,
+            str,
+        ):
+            stripped = (
+                position.strip()
+            )
 
             if stripped.isdigit():
-                position = int(stripped)
+                position = int(
+                    stripped
+                )
             else:
                 position = index + 1
 
-        if not isinstance(position, int):
+        if not isinstance(
+            position,
+            int,
+        ):
             position = index + 1
 
         if not 1 <= position <= 4:
@@ -342,7 +366,10 @@ def _normalize_question(
             or ""
         )
 
-        option_text = str(option_text).strip()
+        option_text = (
+            str(option_text)
+            .strip()
+        )
 
         # -------------------------------------------------
         # is_correct
@@ -350,17 +377,22 @@ def _normalize_question(
 
         if "is_correct" in option:
             is_correct = _normalize_bool(
-                option["is_correct"]
+                option[
+                    "is_correct"
+                ]
             )
 
         elif "correct" in option:
             is_correct = _normalize_bool(
-                option["correct"]
+                option[
+                    "correct"
+                ]
             )
 
         elif correct_hint is not None:
             is_correct = (
-                option_key == correct_hint
+                option_key
+                == correct_hint
             )
 
         else:
@@ -368,13 +400,22 @@ def _normalize_question(
 
         normalized_options.append(
             {
-                "option_key": option_key,
-                "option_text": option_text,
-                "is_correct": is_correct,
-                "explanation": option.get(
-                    "explanation"
-                ),
-                "position": position,
+                "option_key":
+                    option_key,
+
+                "option_text":
+                    option_text,
+
+                "is_correct":
+                    is_correct,
+
+                "explanation":
+                    option.get(
+                        "explanation"
+                    ),
+
+                "position":
+                    position,
             }
         )
 
@@ -385,9 +426,14 @@ def _normalize_question(
         option["option_key"] = (
             OPTION_KEYS[index]
         )
-        option["position"] = index + 1
 
-    question["options"] = normalized_options
+        option["position"] = (
+            index + 1
+        )
+
+    question["options"] = (
+        normalized_options
+    )
 
     return question
 
@@ -400,10 +446,6 @@ def _normalize_question(
 def _normalize_compare_text(
     value: str,
 ) -> str:
-    """
-    Normalize text for duplicate comparison.
-    """
-
     value = value.strip().lower()
 
     value = re.sub(
@@ -424,16 +466,9 @@ def _normalize_compare_text(
 def _validate_question_quality(
     question: QuestionCreate,
 ) -> None:
-    """
-    Local validation that does not require another
-    LLM call.
-
-    Semantic ambiguity is mainly prevented through
-    the strict generation prompt below.
-    """
-
     question_text = (
-        question.question_text or ""
+        question.question_text
+        or ""
     ).strip()
 
     if len(question_text) < 8:
@@ -448,7 +483,8 @@ def _validate_question_quality(
 
     correct_options = [
         option
-        for option in question.options
+        for option
+        in question.options
         if option.is_correct
     ]
 
@@ -462,24 +498,29 @@ def _validate_question_quality(
         _normalize_compare_text(
             option.option_text
         )
-        for option in question.options
+        for option
+        in question.options
     ]
 
     if any(
         not text
-        for text in option_texts
+        for text
+        in option_texts
     ):
         raise ValueError(
             "Option text cannot be empty"
         )
 
-    if len(set(option_texts)) != 4:
+    if len(
+        set(option_texts)
+    ) != 4:
         raise ValueError(
             "Question contains duplicate options"
         )
 
     correct_text = (
-        correct_options[0].option_text
+        correct_options[0]
+        .option_text
         .strip()
     )
 
@@ -497,17 +538,10 @@ def _validate_question_quality(
 def _looks_like_toc(
     content: str,
 ) -> bool:
-    """
-    Detect chunks that are mainly table-of-contents
-    material.
-
-    Only inspect the beginning instead of rejecting
-    every chunk that happens to mention "MỤC LỤC"
-    somewhere later.
-    """
-
     normalized = (
-        content.strip().upper()
+        content
+        .strip()
+        .upper()
     )
 
     beginning = normalized[:700]
@@ -519,39 +553,43 @@ def _looks_like_toc(
 
     has_toc_marker = any(
         marker in beginning
-        for marker in toc_markers
+        for marker
+        in toc_markers
     )
 
     if not has_toc_marker:
         return False
 
-    # A long chunk may contain TOC followed by useful
-    # content. We only reject it if it looks strongly
-    # like navigation/index material.
-    chapter_count = beginning.count(
-        "CHƯƠNG"
+    chapter_count = (
+        beginning.count(
+            "CHƯƠNG"
+        )
     )
 
     return chapter_count >= 3
 
 
 def _get_quiz_candidate_chunks(
-    chunks: list[DocumentChunk],
-) -> list[DocumentChunk]:
-    """
-    Remove tiny or TOC-heavy chunks.
-    """
-
+    chunks: list[
+        DocumentChunk
+    ],
+) -> list[
+    DocumentChunk
+]:
     candidates = [
         chunk
         for chunk in chunks
         if (
             len(
-                (chunk.content or "").strip()
+                (
+                    chunk.content
+                    or ""
+                ).strip()
             )
             >= 500
             and not _looks_like_toc(
-                chunk.content or ""
+                chunk.content
+                or ""
             )
         )
     ]
@@ -559,9 +597,13 @@ def _get_quiz_candidate_chunks(
     if not candidates:
         candidates = [
             chunk
-            for chunk in chunks
+            for chunk
+            in chunks
             if len(
-                (chunk.content or "").strip()
+                (
+                    chunk.content
+                    or ""
+                ).strip()
             )
             >= 200
         ]
@@ -573,15 +615,14 @@ def _get_quiz_candidate_chunks(
 
 
 def _select_source_chunks(
-    chunks: list[DocumentChunk],
+    chunks: list[
+        DocumentChunk
+    ],
     question_count: int,
     max_sources: int = 6,
-) -> list[DocumentChunk]:
-    """
-    Select chunks distributed across the document
-    instead of always choosing the first chunks.
-    """
-
+) -> list[
+    DocumentChunk
+]:
     if not chunks:
         return []
 
@@ -592,57 +633,89 @@ def _select_source_chunks(
     )
 
     if source_count <= 1:
-        return [chunks[0]]
+        return [
+            chunks[0]
+        ]
 
-    last_index = len(chunks) - 1
+    last_index = (
+        len(chunks) - 1
+    )
 
     indexes = [
         round(
             index
             * last_index
-            / (source_count - 1)
+            / (
+                source_count
+                - 1
+            )
         )
-        for index in range(source_count)
+        for index
+        in range(
+            source_count
+        )
     ]
 
-    selected: list[DocumentChunk] = []
+    selected: list[
+        DocumentChunk
+    ] = []
+
     seen_ids: set[int] = set()
 
     for index in indexes:
         chunk = chunks[index]
 
-        if chunk.id not in seen_ids:
-            selected.append(chunk)
-            seen_ids.add(chunk.id)
+        if (
+            chunk.id
+            not in seen_ids
+        ):
+            selected.append(
+                chunk
+            )
+            seen_ids.add(
+                chunk.id
+            )
 
-    if len(selected) < source_count:
+    if (
+        len(selected)
+        < source_count
+    ):
         for chunk in chunks:
-            if chunk.id in seen_ids:
+
+            if (
+                chunk.id
+                in seen_ids
+            ):
                 continue
 
-            selected.append(chunk)
-            seen_ids.add(chunk.id)
+            selected.append(
+                chunk
+            )
 
-            if len(selected) >= source_count:
+            seen_ids.add(
+                chunk.id
+            )
+
+            if (
+                len(selected)
+                >= source_count
+            ):
                 break
 
     return selected
 
 
 def _allocate_question_counts(
-    chunks: list[DocumentChunk],
+    chunks: list[
+        DocumentChunk
+    ],
     question_count: int,
-) -> list[tuple[DocumentChunk, int]]:
-    """
-    Example:
-
-    3 questions / 3 chunks
-        -> 1, 1, 1
-
-    10 questions / 4 chunks
-        -> 3, 3, 2, 2
-    """
-
+) -> list[
+    tuple[
+        DocumentChunk,
+        int,
+    ]
+]:
     if not chunks:
         return []
 
@@ -657,7 +730,10 @@ def _allocate_question_counts(
     )
 
     allocation: list[
-        tuple[DocumentChunk, int]
+        tuple[
+            DocumentChunk,
+            int,
+        ]
     ] = []
 
     for index, chunk in enumerate(
@@ -688,7 +764,13 @@ def generate_quiz(
     db: Session,
     owner_id: int,
     payload: QuizGenerateRequest,
+    *,
+    allowed_section_ids: (
+        list[int]
+        | None
+    ) = None,
 ) -> Quiz:
+
     provider = get_ai_provider()
 
     if not provider.can_chat:
@@ -701,24 +783,77 @@ def generate_quiz(
         )
 
     # =====================================================
-    # 1. AUTHORIZATION
+    # 1. NORMALIZE INPUT
     # =====================================================
 
     requested_document_ids = list(
-        payload.document_ids or []
+        dict.fromkeys(
+            int(document_id)
+            for document_id
+            in (
+                payload.document_ids
+                or []
+            )
+        )
     )
 
+    normalized_section_ids: list[
+        int
+    ] = []
+
+    if (
+        allowed_section_ids
+        is not None
+    ):
+        normalized_section_ids = list(
+            dict.fromkeys(
+                int(section_id)
+                for section_id
+                in allowed_section_ids
+            )
+        )
+
+        if not normalized_section_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No allowed weak-topic "
+                    "sections were supplied."
+                ),
+            )
+
+    # =====================================================
+    # 2. AUTHORIZATION
+    # =====================================================
+
     if requested_document_ids:
+
+        document_stmt = (
+            select(
+                Document.id
+            )
+            .where(
+                Document.id.in_(
+                    requested_document_ids
+                ),
+                Document.owner_id
+                == owner_id,
+            )
+        )
+
+        # If a subject was supplied, requested documents
+        # must also belong to that subject.
+        if payload.subject_id:
+            document_stmt = (
+                document_stmt.where(
+                    Document.subject_id
+                    == payload.subject_id
+                )
+            )
+
         owned_document_ids = set(
             db.scalars(
-                select(Document.id)
-                .where(
-                    Document.id.in_(
-                        requested_document_ids
-                    ),
-                    Document.owner_id
-                    == owner_id,
-                )
+                document_stmt
             ).all()
         )
 
@@ -734,28 +869,36 @@ def generate_quiz(
                 status_code=403,
                 detail=(
                     "One or more documents "
-                    "are not accessible."
+                    "are not accessible or "
+                    "do not belong to the "
+                    "selected subject."
                 ),
             )
 
     # =====================================================
-    # 2. LOAD READY CHUNKS
+    # 3. LOAD READY CHUNKS
     # =====================================================
 
     stmt = (
-        select(DocumentChunk)
+        select(
+            DocumentChunk
+        )
         .join(
             Document,
             Document.id
             == DocumentChunk.document_id,
         )
         .where(
-            Document.status == "READY",
-            Document.owner_id == owner_id,
+            Document.status
+            == "READY",
+
+            Document.owner_id
+            == owner_id,
         )
     )
 
     if requested_document_ids:
+
         stmt = stmt.where(
             DocumentChunk.document_id.in_(
                 requested_document_ids
@@ -763,9 +906,22 @@ def generate_quiz(
         )
 
     elif payload.subject_id:
+
         stmt = stmt.where(
             Document.subject_id
             == payload.subject_id
+        )
+
+    # =====================================================
+    # 4. OPTIONAL WEAK-SECTION FILTER
+    # =====================================================
+
+    if normalized_section_ids:
+
+        stmt = stmt.where(
+            DocumentChunk.section_id.in_(
+                normalized_section_ids
+            )
         )
 
     all_chunks = list(
@@ -779,7 +935,42 @@ def generate_quiz(
         ).all()
     )
 
+    # =====================================================
+    # 5. PRIORITIZE WEAKEST SECTIONS
+    # =====================================================
+
+    if normalized_section_ids:
+
+        section_rank = {
+            section_id: rank
+            for rank, section_id
+            in enumerate(
+                normalized_section_ids
+            )
+        }
+
+        all_chunks.sort(
+            key=lambda chunk: (
+                section_rank.get(
+                    chunk.section_id,
+                    999999,
+                ),
+                chunk.document_id,
+                chunk.chunk_index,
+            )
+        )
+
     if not all_chunks:
+        if normalized_section_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No READY document chunks "
+                    "were found for the current "
+                    "WEAK topics."
+                ),
+            )
+
         raise HTTPException(
             status_code=400,
             detail=(
@@ -789,7 +980,7 @@ def generate_quiz(
         )
 
     # =====================================================
-    # 3. FILTER CANDIDATES
+    # 6. FILTER CANDIDATES
     # =====================================================
 
     candidate_chunks = (
@@ -808,7 +999,7 @@ def generate_quiz(
         )
 
     # =====================================================
-    # 4. BACKEND SELECTS SOURCE CHUNKS
+    # 7. BACKEND SELECTS SOURCE CHUNKS
     # =====================================================
 
     selected_chunks = (
@@ -828,8 +1019,28 @@ def generate_quiz(
             ),
         )
 
+    # Keep only documents actually used by questions.
+    quiz_document_ids = sorted(
+        {
+            int(
+                chunk.document_id
+            )
+            for chunk
+            in selected_chunks
+        }
+    )
+
+    if not quiz_document_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Could not determine "
+                "quiz source documents."
+            ),
+        )
+
     # =====================================================
-    # 5. ALLOCATE QUESTIONS
+    # 8. ALLOCATE QUESTIONS
     # =====================================================
 
     allocation = (
@@ -856,31 +1067,33 @@ def generate_quiz(
         str
     ] = set()
 
-    ai_model_name: str | None = None
+    ai_model_name: (
+        str
+        | None
+    ) = None
 
-    generation_sources: list[int] = []
+    generation_sources: list[
+        int
+    ] = []
 
     # =====================================================
-    # 6. GENERATE CHUNK BY CHUNK
+    # 9. GENERATE CHUNK BY CHUNK
     # =====================================================
 
     for (
         source_chunk,
         questions_for_chunk,
     ) in allocation:
+
         generation_sources.append(
             source_chunk.id
         )
 
-        # AI sees ONLY this chunk.
+        # AI sees ONLY one source chunk.
         context = (
             "[SOURCE]\n"
             f"{source_chunk.content[:1600]}"
         )
-
-        # =================================================
-        # STRICT PROMPT
-        # =================================================
 
         prompt = f"""
 Create exactly {questions_for_chunk}
@@ -1029,38 +1242,47 @@ SOURCE:
             2400,
             max(
                 900,
-                questions_for_chunk * 500,
+                questions_for_chunk
+                * 500,
             ),
         )
 
         # =================================================
-        # 7. CALL AI
+        # 10. CALL AI
         # =================================================
 
         try:
             result = provider.chat(
                 [
                     {
-                        "role": "system",
-                        "content": (
-                            "You generate grounded "
-                            "multiple-choice questions "
-                            "as strict JSON. "
-                            "Use only the supplied "
-                            "source text. "
-                            "Every question must have "
-                            "exactly one semantically "
-                            "correct answer."
-                        ),
+                        "role":
+                            "system",
+
+                        "content":
+                            (
+                                "You generate grounded "
+                                "multiple-choice questions "
+                                "as strict JSON. "
+                                "Use only the supplied "
+                                "source text. "
+                                "Every question must have "
+                                "exactly one semantically "
+                                "correct answer."
+                            ),
                     },
                     {
-                        "role": "user",
-                        "content": prompt,
+                        "role":
+                            "user",
+
+                        "content":
+                            prompt,
                     },
                 ],
                 json_mode=True,
                 temperature=0.0,
-                max_tokens=max_output_tokens,
+                max_tokens=(
+                    max_output_tokens
+                ),
                 reasoning_effort="none",
             )
 
@@ -1069,8 +1291,10 @@ SOURCE:
                 or ai_model_name
             )
 
-            data = _parse_json_object(
-                result.content
+            data = (
+                _parse_json_object(
+                    result.content
+                )
             )
 
         except AIProviderError as exc:
@@ -1101,7 +1325,7 @@ SOURCE:
             ) from exc
 
         # =================================================
-        # 8. QUESTION COUNT CHECK
+        # 11. QUESTION COUNT CHECK
         # =================================================
 
         raw_questions = data.get(
@@ -1139,10 +1363,12 @@ SOURCE:
             )
 
         # =================================================
-        # 9. NORMALIZE + VALIDATE
+        # 12. NORMALIZE + VALIDATE
         # =================================================
 
-        for raw_question in raw_questions:
+        for raw_question in (
+            raw_questions
+        ):
             try:
                 normalized = (
                     _normalize_question(
@@ -1150,20 +1376,17 @@ SOURCE:
                     )
                 )
 
-                # -----------------------------------------
-                # CRITICAL:
                 # Backend owns source_chunk_id.
-                # AI does NOT control this value.
-                # -----------------------------------------
-
                 normalized[
                     "source_chunk_id"
                 ] = source_chunk.id
 
-                # Backend also controls difficulty.
+                # Backend also owns difficulty.
                 normalized[
                     "difficulty"
-                ] = payload.difficulty
+                ] = (
+                    payload.difficulty
+                )
 
                 question = (
                     QuestionCreate
@@ -1188,7 +1411,7 @@ SOURCE:
                 ) from exc
 
             # =============================================
-            # 10. DUPLICATE QUESTION PROTECTION
+            # DUPLICATE QUESTION PROTECTION
             # =============================================
 
             normalized_text = (
@@ -1219,7 +1442,7 @@ SOURCE:
             )
 
     # =====================================================
-    # 11. FINAL COUNT CHECK
+    # 13. FINAL COUNT CHECK
     # =====================================================
 
     if (
@@ -1238,24 +1461,36 @@ SOURCE:
         )
 
     # =====================================================
-    # 12. CREATE QUIZ PAYLOAD
+    # 14. CREATE QUIZ PAYLOAD
     # =====================================================
 
     create_payload = QuizCreate(
-        subject_id=payload.subject_id,
-        title=payload.title,
-        difficulty=payload.difficulty,
+        subject_id=(
+            payload.subject_id
+        ),
+        title=(
+            payload.title
+        ),
+        difficulty=(
+            payload.difficulty
+        ),
         duration_minutes=(
             payload.duration_minutes
         ),
+
+        # IMPORTANT:
+        # Store only documents actually used
+        # as question sources.
         document_ids=(
-            requested_document_ids
+            quiz_document_ids
         ),
+
         questions=(
             generated_questions
         ),
     )
 
+    # Compact audit note.
     generation_prompt = (
         "Backend-controlled quiz generation. "
         f"question_count="
@@ -1264,11 +1499,13 @@ SOURCE:
         f"{payload.difficulty}; "
         f"source_chunk_ids="
         f"{generation_sources}; "
+        f"allowed_section_ids="
+        f"{normalized_section_ids}; "
         "single-correct-answer semantic rules enabled."
     )
 
     # =====================================================
-    # 13. SAVE QUIZ
+    # 15. SAVE QUIZ
     # =====================================================
 
     return create_quiz(
@@ -1284,6 +1521,118 @@ SOURCE:
 
 
 # =========================================================
+# GENERATE QUIZ FROM WEAK TOPICS
+# =========================================================
+
+
+def generate_weak_topic_quiz(
+    db: Session,
+    owner_id: int,
+    payload: QuizGenerateRequest,
+) -> Quiz:
+
+    # =====================================================
+    # 1. SUBJECT IS REQUIRED
+    # =====================================================
+
+    if not payload.subject_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "subject_id is required "
+                "for weak-topic quiz generation."
+            ),
+        )
+
+    # =====================================================
+    # 2. LOAD CURRENT MASTERY
+    # =====================================================
+
+    mastery = (
+        get_subject_topic_mastery(
+            db,
+            user_id=owner_id,
+            subject_id=(
+                payload.subject_id
+            ),
+        )
+    )
+
+    # =====================================================
+    # 3. KEEP ONLY WEAK TOPICS
+    # =====================================================
+
+    weak_topics = [
+        topic
+        for topic
+        in mastery["topics"]
+        if (
+            topic["status"]
+            == "WEAK"
+        )
+    ]
+
+    # Weakest first.
+    weak_topics.sort(
+        key=lambda topic: (
+            float(
+                topic[
+                    "mastery_score"
+                ]
+            ),
+            -int(
+                topic[
+                    "attempts"
+                ]
+            ),
+            int(
+                topic[
+                    "section_id"
+                ]
+            ),
+        )
+    )
+
+    # =====================================================
+    # 4. NO WEAK TOPICS
+    # =====================================================
+
+    if not weak_topics:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "No WEAK topics were found "
+                "for this subject. "
+                "Complete more quiz attempts "
+                "or use normal quiz generation."
+            ),
+        )
+
+    weak_section_ids = [
+        int(
+            topic[
+                "section_id"
+            ]
+        )
+        for topic
+        in weak_topics
+    ]
+
+    # =====================================================
+    # 5. REUSE NORMAL SAFE GENERATION PIPELINE
+    # =====================================================
+
+    return generate_quiz(
+        db=db,
+        owner_id=owner_id,
+        payload=payload,
+        allowed_section_ids=(
+            weak_section_ids
+        ),
+    )
+
+
+# =========================================================
 # PUBLISH QUIZ
 # =========================================================
 
@@ -1292,7 +1641,9 @@ def publish_quiz(
     db: Session,
     quiz: Quiz,
 ) -> Quiz:
-    quiz.status = "PUBLISHED"
+    quiz.status = (
+        "PUBLISHED"
+    )
 
     try:
         db.commit()
@@ -1308,7 +1659,9 @@ def publish_quiz(
             ),
         ) from exc
 
-    db.refresh(quiz)
+    db.refresh(
+        quiz
+    )
 
     return quiz
 
@@ -1323,13 +1676,18 @@ def start_attempt(
     user_id: int,
     quiz: Quiz,
 ) -> QuizAttempt:
+
     if (
-        quiz.status != "PUBLISHED"
-        and quiz.owner_id != user_id
+        quiz.status
+        != "PUBLISHED"
+        and quiz.owner_id
+        != user_id
     ):
         raise HTTPException(
             status_code=400,
-            detail="Quiz is not published",
+            detail=(
+                "Quiz is not published"
+            ),
         )
 
     attempt = QuizAttempt(
@@ -1338,9 +1696,15 @@ def start_attempt(
         status="IN_PROGRESS",
     )
 
-    db.add(attempt)
+    db.add(
+        attempt
+    )
+
     db.commit()
-    db.refresh(attempt)
+
+    db.refresh(
+        attempt
+    )
 
     return attempt
 
@@ -1355,7 +1719,11 @@ def submit_attempt(
     attempt: QuizAttempt,
     answers: list[dict],
 ) -> QuizAttempt:
-    if attempt.status != "IN_PROGRESS":
+
+    if (
+        attempt.status
+        != "IN_PROGRESS"
+    ):
         raise HTTPException(
             status_code=409,
             detail=(
@@ -1377,7 +1745,9 @@ def submit_attempt(
 
     questions = list(
         db.scalars(
-            select(Question)
+            select(
+                Question
+            )
             .where(
                 Question.quiz_id
                 == attempt.quiz_id
@@ -1388,15 +1758,29 @@ def submit_attempt(
         ).all()
     )
 
-    answer_map: dict[int, int | None] = {}
+    # =====================================================
+    # NORMALIZE ANSWERS
+    # =====================================================
+
+    answer_map: dict[
+        int,
+        int | None,
+    ] = {}
 
     for answer in answers:
-        # FastAPI/Pydantic object
-        if hasattr(answer, "model_dump"):
-            answer_data = answer.model_dump()
 
-        # Dictionary thông thường
-        elif isinstance(answer, dict):
+        if hasattr(
+            answer,
+            "model_dump",
+        ):
+            answer_data = (
+                answer.model_dump()
+            )
+
+        elif isinstance(
+            answer,
+            dict,
+        ):
             answer_data = answer
 
         else:
@@ -1407,8 +1791,10 @@ def submit_attempt(
                 ),
             )
 
-        question_id = answer_data.get(
-            "question_id"
+        question_id = (
+            answer_data.get(
+                "question_id"
+            )
         )
 
         selected_option_id = (
@@ -1425,16 +1811,23 @@ def submit_attempt(
                 ),
             )
 
-        answer_map[int(question_id)] = (
-            int(selected_option_id)
-            if selected_option_id
-            is not None
+        answer_map[
+            int(question_id)
+        ] = (
+            int(
+                selected_option_id
+            )
+            if (
+                selected_option_id
+                is not None
+            )
             else None
         )
 
     question_ids = {
         question.id
-        for question in questions
+        for question
+        in questions
     }
 
     if not set(
@@ -1450,8 +1843,13 @@ def submit_attempt(
             ),
         )
 
-    max_score = Decimal("0")
-    score = Decimal("0")
+    max_score = Decimal(
+        "0"
+    )
+
+    score = Decimal(
+        "0"
+    )
 
     correct_count = 0
     wrong_count = 0
@@ -1462,22 +1860,31 @@ def submit_attempt(
     # =====================================================
 
     for question in questions:
+
         max_score += Decimal(
             question.points
         )
 
-        selected_id = answer_map.get(
-            question.id
+        selected_id = (
+            answer_map.get(
+                question.id
+            )
         )
 
         selected = None
 
-        if selected_id is not None:
+        if (
+            selected_id
+            is not None
+        ):
             selected = db.scalar(
-                select(QuestionOption)
+                select(
+                    QuestionOption
+                )
                 .where(
                     QuestionOption.id
                     == selected_id,
+
                     QuestionOption.question_id
                     == question.id,
                 )
@@ -1499,9 +1906,13 @@ def submit_attempt(
         )
 
         awarded = (
-            Decimal(question.points)
+            Decimal(
+                question.points
+            )
             if is_correct
-            else Decimal("0")
+            else Decimal(
+                "0"
+            )
         )
 
         if selected is None:
@@ -1516,17 +1927,24 @@ def submit_attempt(
 
         db.add(
             UserAnswer(
-                attempt_id=attempt.id,
-                question_id=question.id,
+                attempt_id=(
+                    attempt.id
+                ),
+                question_id=(
+                    question.id
+                ),
                 selected_option_id=(
                     selected_id
                 ),
                 is_correct=(
                     is_correct
-                    if selected is not None
+                    if selected
+                    is not None
                     else None
                 ),
-                points_awarded=awarded,
+                points_awarded=(
+                    awarded
+                ),
             )
         )
 
@@ -1541,90 +1959,111 @@ def submit_attempt(
             section_id = db.scalar(
                 select(
                     DocumentChunk.section_id
-                ).where(
+                )
+                .where(
                     DocumentChunk.id
                     == question.source_chunk_id
                 )
             )
 
             if section_id:
+
                 mastery = db.scalar(
-                    select(TopicMastery).where(
+                    select(
+                        TopicMastery
+                    )
+                    .where(
                         TopicMastery.user_id
                         == attempt.user_id,
+
                         TopicMastery.section_id
                         == section_id,
                     )
                 )
 
-                # -----------------------------------------
-                # Create new mastery row
-                # -----------------------------------------
-
                 if mastery is None:
+
                     mastery = TopicMastery(
-                        user_id=attempt.user_id,
-                        subject_id=quiz.subject_id,
-                        section_id=section_id,
+                        user_id=(
+                            attempt.user_id
+                        ),
+                        subject_id=(
+                            quiz.subject_id
+                        ),
+                        section_id=(
+                            section_id
+                        ),
                         attempts=0,
                         correct_answers=0,
                         wrong_answers=0,
-                        mastery_score=Decimal("0"),
+                        mastery_score=(
+                            Decimal(
+                                "0"
+                            )
+                        ),
                     )
 
-                    db.add(mastery)
+                    db.add(
+                        mastery
+                    )
+
                     db.flush()
 
-                # -----------------------------------------
-                # Safely normalize numeric values
-                # -----------------------------------------
-
                 attempts = int(
-                    mastery.attempts or 0
+                    mastery.attempts
+                    or 0
                 )
 
                 correct_answers = int(
-                    mastery.correct_answers or 0
+                    mastery.correct_answers
+                    or 0
                 )
 
                 wrong_answers = int(
-                    mastery.wrong_answers or 0
+                    mastery.wrong_answers
+                    or 0
                 )
 
-                # Every question counts as an attempt,
-                # including unanswered questions.
                 attempts += 1
 
                 if is_correct:
                     correct_answers += 1
 
-                elif selected is not None:
+                elif (
+                    selected
+                    is not None
+                ):
                     wrong_answers += 1
 
-                # -----------------------------------------
-                # Save counters
-                # -----------------------------------------
+                mastery.attempts = (
+                    attempts
+                )
 
-                mastery.attempts = attempts
                 mastery.correct_answers = (
                     correct_answers
                 )
+
                 mastery.wrong_answers = (
                     wrong_answers
                 )
 
-                # -----------------------------------------
-                # Calculate mastery score safely
-                # -----------------------------------------
-
                 mastery.mastery_score = (
-                    Decimal(correct_answers)
-                    * Decimal("100")
+                    Decimal(
+                        correct_answers
+                    )
+                    * Decimal(
+                        "100"
+                    )
                     / Decimal(
-                        max(1, attempts)
+                        max(
+                            1,
+                            attempts,
+                        )
                     )
                 ).quantize(
-                    Decimal("0.01")
+                    Decimal(
+                        "0.01"
+                    )
                 )
 
                 mastery.last_practiced_at = (
@@ -1641,24 +2080,39 @@ def submit_attempt(
         timezone.utc
     )
 
-    attempt.status = "SUBMITTED"
-    attempt.submitted_at = now
+    attempt.status = (
+        "SUBMITTED"
+    )
+
+    attempt.submitted_at = (
+        now
+    )
 
     if attempt.started_at:
+
         attempt.time_spent_seconds = max(
             0,
             int(
                 (
                     now
                     - attempt.started_at
-                ).total_seconds()
+                )
+                .total_seconds()
             ),
         )
-    else:
-        attempt.time_spent_seconds = None
 
-    attempt.score = score
-    attempt.max_score = max_score
+    else:
+        attempt.time_spent_seconds = (
+            None
+        )
+
+    attempt.score = (
+        score
+    )
+
+    attempt.max_score = (
+        max_score
+    )
 
     attempt.correct_count = (
         correct_count
@@ -1673,16 +2127,23 @@ def submit_attempt(
     )
 
     if max_score == 0:
+
         attempt.percentage = Decimal(
             "0"
         )
+
     else:
+
         attempt.percentage = (
             score
-            * Decimal("100")
+            * Decimal(
+                "100"
+            )
             / max_score
         ).quantize(
-            Decimal("0.01")
+            Decimal(
+                "0.01"
+            )
         )
 
     # =====================================================
@@ -1692,21 +2153,33 @@ def submit_attempt(
     today = date.today()
 
     stat = db.scalar(
-        select(DailyLearningStat).where(
+        select(
+            DailyLearningStat
+        )
+        .where(
             DailyLearningStat.user_id
             == attempt.user_id,
+
             DailyLearningStat.activity_date
             == today,
         )
     )
 
     if stat is None:
+
         stat = DailyLearningStat(
-            user_id=attempt.user_id,
-            activity_date=today,
+            user_id=(
+                attempt.user_id
+            ),
+            activity_date=(
+                today
+            ),
         )
 
-        db.add(stat)
+        db.add(
+            stat
+        )
+
         db.flush()
 
     stat.quiz_attempts = (
@@ -1722,7 +2195,9 @@ def submit_attempt(
             stat.questions_answered
             or 0
         )
-        + len(questions)
+        + len(
+            questions
+        )
     )
 
     stat.correct_answers = (
@@ -1738,26 +2213,36 @@ def submit_attempt(
     # =====================================================
 
     if quiz.subject_id:
+
         progress = db.scalar(
-            select(UserSubjectProgress).where(
+            select(
+                UserSubjectProgress
+            )
+            .where(
                 UserSubjectProgress.user_id
                 == attempt.user_id,
+
                 UserSubjectProgress.subject_id
                 == quiz.subject_id,
             )
         )
 
         if progress is None:
-            progress = UserSubjectProgress(
-                user_id=(
-                    attempt.user_id
-                ),
-                subject_id=(
-                    quiz.subject_id
-                ),
+
+            progress = (
+                UserSubjectProgress(
+                    user_id=(
+                        attempt.user_id
+                    ),
+                    subject_id=(
+                        quiz.subject_id
+                    ),
+                )
             )
 
-            db.add(progress)
+            db.add(
+                progress
+            )
 
         progress.quizzes_completed = (
             int(
@@ -1784,9 +2269,13 @@ def submit_attempt(
                 * prior_count
             )
             + attempt.percentage
-        ) / progress.quizzes_completed
+        ) / (
+            progress.quizzes_completed
+        )
 
-        progress.last_activity_at = now
+        progress.last_activity_at = (
+            now
+        )
 
     # =====================================================
     # GAMIFICATION
@@ -1794,7 +2283,8 @@ def submit_attempt(
 
     xp = (
         10
-        + correct_count * 2
+        + correct_count
+        * 2
     )
 
     add_xp(
@@ -1822,6 +2312,9 @@ def submit_attempt(
     # =====================================================
 
     db.commit()
-    db.refresh(attempt)
+
+    db.refresh(
+        attempt
+    )
 
     return attempt

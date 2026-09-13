@@ -5,20 +5,36 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 
+# =========================================================
+# MASTERY RULES
+# =========================================================
+
+MIN_MASTERY_ATTEMPTS = 2
+
+WEAK_MASTERY_THRESHOLD = 60.0
+STRONG_MASTERY_THRESHOLD = 80.0
+
+
 def _classify_mastery(
     attempts: int,
     mastery_score: float,
 ) -> str:
-    if attempts < 2:
+
+    if attempts < MIN_MASTERY_ATTEMPTS:
         return "NOT_ENOUGH_DATA"
 
-    if mastery_score < 60:
+    if mastery_score < WEAK_MASTERY_THRESHOLD:
         return "WEAK"
 
-    if mastery_score < 80:
+    if mastery_score < STRONG_MASTERY_THRESHOLD:
         return "DEVELOPING"
 
     return "STRONG"
+
+
+# =========================================================
+# TOPIC MASTERY
+# =========================================================
 
 
 def get_subject_topic_mastery(
@@ -58,7 +74,7 @@ def get_subject_topic_mastery(
         )
 
     # =====================================================
-    # 2. LOAD ALL SECTIONS OF THIS SUBJECT
+    # 2. LOAD SECTIONS + MASTERY
     # =====================================================
 
     rows = db.execute(
@@ -225,4 +241,64 @@ def get_subject_topic_mastery(
 
         "topics":
             topics,
+    }
+
+
+# =========================================================
+# WEAK TOPICS
+# =========================================================
+
+
+def get_weak_topics(
+    db: Session,
+    *,
+    user_id: int,
+    subject_id: int,
+) -> dict:
+
+    mastery = get_subject_topic_mastery(
+        db,
+        user_id=user_id,
+        subject_id=subject_id,
+    )
+
+    weak_topics = [
+        topic
+        for topic in mastery["topics"]
+        if topic["status"] == "WEAK"
+    ]
+
+    # Weakest topic first.
+    weak_topics.sort(
+        key=lambda topic: (
+            float(
+                topic["mastery_score"]
+            ),
+            -int(
+                topic["attempts"]
+            ),
+            int(
+                topic["section_id"]
+            ),
+        )
+    )
+
+    return {
+        "subject_id":
+            mastery["subject_id"],
+
+        "subject_name":
+            mastery["subject_name"],
+
+        "threshold":
+            WEAK_MASTERY_THRESHOLD,
+
+        "minimum_attempts":
+            MIN_MASTERY_ATTEMPTS,
+
+        "count":
+            len(weak_topics),
+
+        "topics":
+            weak_topics,
     }
