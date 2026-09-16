@@ -57,3 +57,25 @@ class WeakTopicsResponse(BaseModel):
     count: int
 
     topics: list[TopicMasteryItem]
+
+class PracticeRecommendationItem(
+    TopicMasteryItem
+):
+    rank: int
+    reason: str
+
+
+class PracticeRecommendationResponse(
+    BaseModel
+):
+    subject_id: int
+    subject_name: str
+
+    strategy: str
+
+    recommendation_count: int
+    skipped_strong_topics: int
+
+    recommendations: list[
+        PracticeRecommendationItem
+    ]

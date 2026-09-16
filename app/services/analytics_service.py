@@ -243,6 +243,334 @@ def get_subject_topic_mastery(
             topics,
     }
 
+# =========================================================
+# ADAPTIVE PRACTICE RECOMMENDATION
+# =========================================================
+
+
+PRACTICE_STATUS_PRIORITY = {
+    "WEAK": 0,
+    "DEVELOPING": 1,
+    "NOT_ENOUGH_DATA": 2,
+}
+
+
+PRACTICE_STRATEGY = (
+    "WEAK > DEVELOPING > "
+    "NOT_ENOUGH_DATA; STRONG skipped"
+)
+
+
+def _practice_recommendation_sort_key(
+    topic: dict,
+) -> tuple:
+    """
+    Adaptive Practice ranking algorithm.
+
+    Priority:
+        1. WEAK
+        2. DEVELOPING
+        3. NOT_ENOUGH_DATA
+        4. STRONG is excluded
+
+    Inside WEAK / DEVELOPING:
+        - lower mastery first
+        - more attempts first when scores tie
+
+    Inside NOT_ENOUGH_DATA:
+        - fewer attempts first
+    """
+
+    status = str(
+        topic.get(
+            "status",
+            "",
+        )
+    )
+
+    priority = (
+        PRACTICE_STATUS_PRIORITY.get(
+            status,
+            999,
+        )
+    )
+
+    attempts = int(
+        topic.get(
+            "attempts",
+            0,
+        )
+        or 0
+    )
+
+    mastery_score = float(
+        topic.get(
+            "mastery_score",
+            0,
+        )
+        or 0
+    )
+
+    section_id = int(
+        topic.get(
+            "section_id",
+            0,
+        )
+        or 0
+    )
+
+    if (
+        status
+        == "NOT_ENOUGH_DATA"
+    ):
+        return (
+            priority,
+            attempts,
+            section_id,
+        )
+
+    return (
+        priority,
+        mastery_score,
+        -attempts,
+        section_id,
+    )
+
+
+def _practice_recommendation_reason(
+    topic: dict,
+) -> str:
+
+    status = str(
+        topic.get(
+            "status",
+            "",
+        )
+    )
+
+    score = float(
+        topic.get(
+            "mastery_score",
+            0,
+        )
+        or 0
+    )
+
+    attempts = int(
+        topic.get(
+            "attempts",
+            0,
+        )
+        or 0
+    )
+
+    if status == "WEAK":
+        return (
+            "Mastery is below 60%, "
+            "so this topic should be "
+            "reviewed first."
+        )
+
+    if status == "DEVELOPING":
+        return (
+            f"Mastery is {score:.2f}%. "
+            "The learner has basic "
+            "understanding but still needs "
+            "more practice to reach STRONG."
+        )
+
+    if (
+        status
+        == "NOT_ENOUGH_DATA"
+    ):
+        return (
+            f"Only {attempts} attempt(s) "
+            "are available. More practice "
+            "is needed to measure mastery "
+            "reliably."
+        )
+
+    return (
+        "No adaptive practice "
+        "is currently required."
+    )
+
+
+def get_practice_recommendations(
+    db: Session,
+    *,
+    user_id: int,
+    subject_id: int,
+) -> dict:
+    """
+    Build a personalized topic queue.
+
+    This function does NOT use AI to decide
+    priorities. Ranking is controlled entirely
+    by backend rules.
+    """
+
+    mastery = (
+        get_subject_topic_mastery(
+            db,
+            user_id=user_id,
+            subject_id=subject_id,
+        )
+    )
+
+    topics = list(
+        mastery.get(
+            "topics",
+            []
+        )
+    )
+
+    # -----------------------------------------------------
+    # Exclude STRONG topics
+    # -----------------------------------------------------
+
+    candidates = [
+        dict(topic)
+
+        for topic
+        in topics
+
+        if (
+            str(
+                topic.get(
+                    "status",
+                    "",
+                )
+            )
+            in PRACTICE_STATUS_PRIORITY
+        )
+    ]
+
+    candidates.sort(
+        key=(
+            _practice_recommendation_sort_key
+        )
+    )
+
+    recommendations: list[
+        dict
+    ] = []
+
+    for rank, topic in enumerate(
+        candidates,
+        start=1,
+    ):
+        recommendation = {
+            "rank": rank,
+
+            "section_id":
+                int(
+                    topic[
+                        "section_id"
+                    ]
+                ),
+
+            "title":
+                topic[
+                    "title"
+                ],
+
+            "attempts":
+                int(
+                    topic.get(
+                        "attempts",
+                        0,
+                    )
+                    or 0
+                ),
+
+            "correct_answers":
+                int(
+                    topic.get(
+                        "correct_answers",
+                        0,
+                    )
+                    or 0
+                ),
+
+            "wrong_answers":
+                int(
+                    topic.get(
+                        "wrong_answers",
+                        0,
+                    )
+                    or 0
+                ),
+
+            "mastery_score":
+                float(
+                    topic.get(
+                        "mastery_score",
+                        0,
+                    )
+                    or 0
+                ),
+
+            "status":
+                topic[
+                    "status"
+                ],
+
+            "last_practiced_at":
+                topic.get(
+                    "last_practiced_at"
+                ),
+
+            "reason":
+                _practice_recommendation_reason(
+                    topic
+                ),
+        }
+
+        recommendations.append(
+            recommendation
+        )
+
+    skipped_strong_topics = sum(
+        1
+
+        for topic
+        in topics
+
+        if (
+            topic.get(
+                "status"
+            )
+            == "STRONG"
+        )
+    )
+
+    return {
+        "subject_id":
+            mastery[
+                "subject_id"
+            ],
+
+        "subject_name":
+            mastery[
+                "subject_name"
+            ],
+
+        "strategy":
+            PRACTICE_STRATEGY,
+
+        "recommendation_count":
+            len(
+                recommendations
+            ),
+
+        "skipped_strong_topics":
+            skipped_strong_topics,
+
+        "recommendations":
+            recommendations,
+    }
+
 
 # =========================================================
 # WEAK TOPICS

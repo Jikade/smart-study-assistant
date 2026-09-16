@@ -27,6 +27,7 @@ from app.services.quiz_service import (
     create_quiz,
     generate_quiz,
     generate_weak_topic_quiz,
+    generate_adaptive_quiz,
     publish_quiz,
     start_attempt,
     submit_attempt,
@@ -201,6 +202,22 @@ def generate_from_weak_topics(
     user: CurrentUser,
 ):
     return generate_weak_topic_quiz(
+        db=db,
+        owner_id=user.id,
+        payload=payload,
+    )
+
+@router.post(
+    "/generate-adaptive",
+    response_model=QuizOut,
+    status_code=201,
+)
+def generate_adaptive(
+    payload: QuizGenerateRequest,
+    db: DbSession,
+    user: CurrentUser,
+):
+    return generate_adaptive_quiz(
         db=db,
         owner_id=user.id,
         payload=payload,

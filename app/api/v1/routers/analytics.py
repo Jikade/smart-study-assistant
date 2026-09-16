@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from fastapi import APIRouter
+
+from app.api.deps import CurrentUser, DbSession
+
 from fastapi import (
     APIRouter,
     Depends,
@@ -12,10 +16,12 @@ from app.api.deps import (
 )
 from app.db.models import User
 from app.schemas.analytics import (
+    PracticeRecommendationResponse,
     SubjectTopicMasteryResponse,
     WeakTopicsResponse,
 )
 from app.services.analytics_service import (
+    get_practice_recommendations,
     get_subject_topic_mastery,
     get_weak_topics,
 )
@@ -49,6 +55,22 @@ def subject_topic_mastery(
         subject_id=subject_id,
     )
 
+@router.get(
+    "/subjects/{subject_id}/practice-recommendations",
+    response_model=(
+        PracticeRecommendationResponse
+    ),
+)
+def practice_recommendations(
+    subject_id: int,
+    db: DbSession,
+    user: CurrentUser,
+):
+    return get_practice_recommendations(
+        db,
+        user_id=user.id,
+        subject_id=subject_id,
+    )
 
 # =========================================================
 # WEAK TOPICS

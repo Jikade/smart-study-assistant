@@ -33,6 +33,7 @@ from app.services.ai_provider import (
     get_ai_provider,
 )
 from app.services.analytics_service import (
+    get_practice_recommendations,
     get_subject_topic_mastery,
 )
 from app.services.gamification_service import (
@@ -51,6 +52,11 @@ OPTION_KEYS = ("A", "B", "C", "D")
 # Initial candidate + 2 replacement attempts
 # = tối đa 3 candidate cho một câu.
 SEMANTIC_MAX_RETRIES = 2
+
+# Initial AI generation:
+# nếu model trả JSON malformed / sai schema,
+# backend cho phép gọi lại tối đa 2 lần.
+INITIAL_JSON_MAX_RETRIES = 2
 
 # Verifier chỉ trả JSON nhỏ.
 SEMANTIC_VERIFY_MAX_TOKENS = 650
@@ -3551,6 +3557,10 @@ def generate_quiz(
     quality_repairs_used = 0
     verified_question_count = 0
 
+    # Số lần phải gọi lại initial generation
+    # vì JSON malformed hoặc sai schema.
+    initial_json_retries_used = 0
+
     # =====================================================
     # 9. GENERATE CHUNK BY CHUNK
     # =====================================================
@@ -3745,119 +3755,262 @@ SOURCE:
 
         # =================================================
         # 10. INITIAL GENERATION
+        #
+        # JSON resilience:
+        # - Initial call
+        # - Up to INITIAL_JSON_MAX_RETRIES retries
+        #
+        # This retry is ONLY for malformed JSON /
+        # invalid initial response schema.
+        #
+        # Semantic failures are still handled later by
+        # _validate_question_with_retry().
         # =================================================
 
-        try:
-            result = provider.chat(
-                [
-                    {
-                        "role":
-                            "system",
+        raw_questions = None
+        last_initial_error = None
 
-                        "content":
-                            (
-                                "You generate grounded "
-                                "multiple-choice questions "
-                                "as strict JSON. "
-                                "Use only supplied source. "
-                                "Every question must have "
-                                "exactly one semantically "
-                                "correct answer."
-                            ),
-                    },
-                    {
-                        "role":
-                            "user",
+        for initial_attempt in range(
+            INITIAL_JSON_MAX_RETRIES + 1
+        ):
 
-                        "content":
-                            prompt,
-                    },
-                ],
-                json_mode=True,
-                temperature=0.0,
-                max_tokens=(
-                    max_output_tokens
-                ),
-                reasoning_effort="none",
-            )
+            # ---------------------------------------------
+            # Extra instruction only after a malformed
+            # initial response.
+            # ---------------------------------------------
 
-            ai_model_name = (
-                result.model
-                or ai_model_name
-            )
+            retry_instruction = ""
 
-            data = (
-                _parse_json_object(
-                    result.content
+            if initial_attempt > 0:
+                initial_json_retries_used += 1
+
+                retry_instruction = f"""
+IMPORTANT RETRY:
+
+Your previous response could not be parsed
+as the required JSON object.
+
+Previous validation error:
+{last_initial_error}
+
+Regenerate the requested question(s) from
+the SAME SOURCE.
+
+STRICT OUTPUT REQUIREMENTS:
+
+1. Return ONE valid JSON object only.
+2. Do not use Markdown fences.
+3. Do not add text before or after JSON.
+4. Use double quotes for JSON strings.
+5. Separate every JSON field with commas.
+6. Do not leave trailing commas.
+7. Return exactly {questions_for_chunk}
+   question(s).
+8. Every question must contain exactly
+   four options: A, B, C, D.
+9. Exactly one option must have
+   is_correct=true.
+10. Preserve grounding in the supplied SOURCE.
+""".strip()
+
+            current_prompt = prompt
+
+            if retry_instruction:
+                current_prompt = (
+                    prompt
+                    + "\n\n"
+                    + retry_instruction
                 )
-            )
 
-        except AIProviderError as exc:
+            try:
+                result = provider.chat(
+                    [
+                        {
+                            "role":
+                                "system",
 
+                            "content":
+                                (
+                                    "You generate grounded "
+                                    "multiple-choice questions "
+                                    "as strict JSON. "
+                                    "Use only supplied source. "
+                                    "Every question must have "
+                                    "exactly one semantically "
+                                    "correct answer. "
+                                    "The response must be "
+                                    "syntactically valid JSON."
+                                ),
+                        },
+                        {
+                            "role":
+                                "user",
+
+                            "content":
+                                current_prompt,
+                        },
+                    ],
+                    json_mode=True,
+                    temperature=0.0,
+                    max_tokens=(
+                        max_output_tokens
+                    ),
+                    reasoning_effort="none",
+                )
+
+                ai_model_name = (
+                    result.model
+                    or ai_model_name
+                )
+
+                data = (
+                    _parse_json_object(
+                        result.content
+                    )
+                )
+
+                candidate_questions = (
+                    data.get(
+                        "questions"
+                    )
+                )
+
+                if not isinstance(
+                    candidate_questions,
+                    list,
+                ):
+                    raise ValueError(
+                        "AI response field "
+                        "'questions' must be a list"
+                    )
+
+                if (
+                    len(
+                        candidate_questions
+                    )
+                    != questions_for_chunk
+                ):
+                    raise ValueError(
+                        "AI must return exactly "
+                        f"{questions_for_chunk} "
+                        "question(s), but returned "
+                        f"{len(candidate_questions)}"
+                    )
+
+                # Basic per-question schema guard.
+                for candidate_index, candidate in enumerate(
+                    candidate_questions,
+                    start=1,
+                ):
+                    if not isinstance(
+                        candidate,
+                        dict,
+                    ):
+                        raise ValueError(
+                            "Question "
+                            f"{candidate_index} "
+                            "must be a JSON object"
+                        )
+
+                    candidate_options = (
+                        candidate.get(
+                            "options"
+                        )
+                    )
+
+                    if not isinstance(
+                        candidate_options,
+                        list,
+                    ):
+                        raise ValueError(
+                            "Question "
+                            f"{candidate_index} "
+                            "field 'options' must be a list"
+                        )
+
+                    if len(candidate_options) != 4:
+                        raise ValueError(
+                            "Question "
+                            f"{candidate_index} "
+                            "must contain exactly 4 options"
+                        )
+
+                raw_questions = (
+                    candidate_questions
+                )
+
+                if initial_attempt > 0:
+                    print(
+                        "[QUIZ JSON] "
+                        f"chunk={source_chunk.id} "
+                        "recovered after "
+                        f"{initial_attempt} "
+                        "retry/retries"
+                    )
+
+                break
+
+            except AIProviderError as exc:
+
+                # Provider/network/model execution failure
+                # is not a malformed-JSON retry case.
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "AI quiz generation failed "
+                        "for source chunk "
+                        f"{source_chunk.id}: "
+                        f"{exc}"
+                    ),
+                ) from exc
+
+            except (
+                json.JSONDecodeError,
+                KeyError,
+                TypeError,
+                ValueError,
+            ) as exc:
+
+                last_initial_error = str(
+                    exc
+                )
+
+                print(
+                    "[QUIZ JSON] "
+                    f"chunk={source_chunk.id} "
+                    "invalid initial response "
+                    f"attempt="
+                    f"{initial_attempt + 1}/"
+                    f"{INITIAL_JSON_MAX_RETRIES + 1}: "
+                    f"{last_initial_error}"
+                )
+
+                if (
+                    initial_attempt
+                    >= INITIAL_JSON_MAX_RETRIES
+                ):
+                    raise HTTPException(
+                        status_code=502,
+                        detail=(
+                            "AI returned invalid JSON "
+                            "or response schema for "
+                            "source chunk "
+                            f"{source_chunk.id} after "
+                            f"{INITIAL_JSON_MAX_RETRIES + 1} "
+                            "attempt(s). "
+                            "Last reason: "
+                            f"{last_initial_error}"
+                        ),
+                    ) from exc
+
+        if raw_questions is None:
             raise HTTPException(
                 status_code=502,
                 detail=(
-                    "AI quiz generation failed "
-                    "for source chunk "
-                    f"{source_chunk.id}: "
-                    f"{exc}"
-                ),
-            ) from exc
-
-        except (
-            json.JSONDecodeError,
-            KeyError,
-            TypeError,
-            ValueError,
-        ) as exc:
-
-            raise HTTPException(
-                status_code=502,
-                detail=(
-                    "AI returned invalid JSON "
-                    "for source chunk "
-                    f"{source_chunk.id}: "
-                    f"{exc}"
-                ),
-            ) from exc
-
-        # =================================================
-        # INITIAL QUESTION COUNT
-        # =================================================
-
-        raw_questions = (
-            data.get(
-                "questions"
-            )
-        )
-
-        if not isinstance(
-            raw_questions,
-            list,
-        ):
-            raise HTTPException(
-                status_code=502,
-                detail=(
-                    "AI response field "
-                    "'questions' must be a list "
-                    "for source chunk "
+                    "AI produced no usable "
+                    "question payload for "
+                    "source chunk "
                     f"{source_chunk.id}."
-                ),
-            )
-
-        if (
-            len(raw_questions)
-            != questions_for_chunk
-        ):
-            raise HTTPException(
-                status_code=502,
-                detail=(
-                    "AI must return exactly "
-                    f"{questions_for_chunk} "
-                    "question(s) for source chunk "
-                    f"{source_chunk.id}, "
-                    "but returned "
-                    f"{len(raw_questions)}."
                 ),
             )
 
@@ -3990,6 +4143,10 @@ SOURCE:
         f"allowed_section_ids="
         f"{normalized_section_ids}; "
         "single-correct-answer semantic rules enabled; "
+        f"initial_json_max_retries="
+        f"{INITIAL_JSON_MAX_RETRIES}; "
+        f"initial_json_retries_used="
+        f"{initial_json_retries_used}; "
         "semantic_grounding_verifier=enabled; "
         f"semantic_max_retries="
         f"{SEMANTIC_MAX_RETRIES}; "
@@ -4128,6 +4285,188 @@ def generate_weak_topic_quiz(
         ),
     )
 
+
+# =========================================================
+# GENERATE ADAPTIVE QUIZ
+# =========================================================
+
+
+def generate_adaptive_quiz(
+    db: Session,
+    owner_id: int,
+    payload: QuizGenerateRequest,
+) -> Quiz:
+    """
+    Generate a personalized quiz using the
+    backend Adaptive Practice Recommendation
+    algorithm.
+
+    Priority:
+        WEAK
+        -> DEVELOPING
+        -> NOT_ENOUGH_DATA
+
+    STRONG topics are skipped.
+
+    Actual question generation is still delegated
+    to generate_quiz(), therefore the existing
+    Semantic Quality Gate remains active.
+    """
+
+    # =====================================================
+    # 1. SUBJECT REQUIRED
+    # =====================================================
+
+    if not payload.subject_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "subject_id is required "
+                "for adaptive quiz generation."
+            ),
+        )
+
+    # =====================================================
+    # 2. BUILD PERSONALIZED RECOMMENDATIONS
+    # =====================================================
+
+    result = (
+        get_practice_recommendations(
+            db,
+            user_id=owner_id,
+            subject_id=(
+                payload.subject_id
+            ),
+        )
+    )
+
+    recommendations = list(
+        result.get(
+            "recommendations",
+            []
+        )
+    )
+
+    # =====================================================
+    # 3. NOTHING LEFT TO PRACTICE
+    # =====================================================
+
+    if not recommendations:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "No adaptive practice topics "
+                "are currently available. "
+                "All measured topics are STRONG."
+            ),
+        )
+
+    # =====================================================
+    # 4. SELECT TOP PRIORITY SECTIONS
+    #
+    # Do not select more sections than questions.
+    #
+    # 1 question -> highest-priority topic only.
+    # 2 questions -> top 2 topics.
+    # etc.
+    # =====================================================
+
+    section_limit = min(
+        len(
+            recommendations
+        ),
+        max(
+            1,
+            int(
+                payload.question_count
+            ),
+        ),
+    )
+
+    selected_recommendations = (
+        recommendations[
+            :section_limit
+        ]
+    )
+
+    adaptive_section_ids = [
+        int(
+            item[
+                "section_id"
+            ]
+        )
+        for item
+        in selected_recommendations
+    ]
+
+    adaptive_statuses = [
+        str(
+            item[
+                "status"
+            ]
+        )
+        for item
+        in selected_recommendations
+    ]
+
+    # =====================================================
+    # 5. REUSE SAFE QUIZ PIPELINE
+    # =====================================================
+
+    quiz = generate_quiz(
+        db=db,
+        owner_id=owner_id,
+        payload=payload,
+        allowed_section_ids=(
+            adaptive_section_ids
+        ),
+    )
+
+    # =====================================================
+    # 6. ADD ADAPTIVE AUDIT METADATA
+    # =====================================================
+
+    existing_audit = (
+        quiz.generation_prompt
+        or ""
+    )
+
+    adaptive_audit = (
+        " adaptive_generation=enabled; "
+        "adaptive_strategy="
+        "WEAK>DEVELOPING>"
+        "NOT_ENOUGH_DATA; "
+        f"adaptive_section_ids="
+        f"{adaptive_section_ids}; "
+        f"adaptive_statuses="
+        f"{adaptive_statuses}."
+    )
+
+    quiz.generation_prompt = (
+        existing_audit
+        + adaptive_audit
+    )
+
+    try:
+        db.commit()
+
+    except Exception as exc:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Adaptive quiz was generated "
+                "but its audit metadata could "
+                f"not be saved: {exc}"
+            ),
+        ) from exc
+
+    db.refresh(
+        quiz
+    )
+
+    return quiz
 
 # =========================================================
 # PUBLISH QUIZ
