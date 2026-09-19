@@ -28,11 +28,11 @@ from app.services.quiz_service import (
     generate_quiz,
     generate_weak_topic_quiz,
     generate_adaptive_quiz,
+    generate_due_quiz,
     publish_quiz,
     start_attempt,
     submit_attempt,
 )
-
 
 router = APIRouter(
     prefix="/quizzes",
@@ -62,18 +62,13 @@ def get_visible_quiz(
             detail="Quiz not found",
         )
 
-    if (
-        row.owner_id
-        != user_id
-        and not (
-            row.status
-            == "PUBLISHED"
-            and row.visibility
-            in {
-                "PUBLIC",
-                "UNLISTED",
-            }
-        )
+    if row.owner_id != user_id and not (
+        row.status == "PUBLISHED"
+        and row.visibility
+        in {
+            "PUBLIC",
+            "UNLISTED",
+        }
     ):
         raise HTTPException(
             status_code=404,
@@ -90,49 +85,20 @@ def get_visible_quiz(
 
 @router.get(
     "",
-    response_model=list[
-        QuizOut
-    ],
+    response_model=list[QuizOut],
 )
 def list_quizzes(
     db: DbSession,
     user: CurrentUser,
-    subject_id: (
-        int
-        | None
-    ) = None,
+    subject_id: int | None = None,
     limit: int = 50,
 ):
-    stmt = (
-        select(
-            Quiz
-        )
-        .where(
-            Quiz.owner_id
-            == user.id
-        )
-    )
+    stmt = select(Quiz).where(Quiz.owner_id == user.id)
 
-    if (
-        subject_id
-        is not None
-    ):
-        stmt = stmt.where(
-            Quiz.subject_id
-            == subject_id
-        )
+    if subject_id is not None:
+        stmt = stmt.where(Quiz.subject_id == subject_id)
 
-    return list(
-        db.scalars(
-            stmt
-            .order_by(
-                Quiz.created_at.desc()
-            )
-            .limit(
-                limit
-            )
-        ).all()
-    )
+    return list(db.scalars(stmt.order_by(Quiz.created_at.desc()).limit(limit)).all())
 
 
 # =========================================================
@@ -207,6 +173,7 @@ def generate_from_weak_topics(
         payload=payload,
     )
 
+
 @router.post(
     "/generate-adaptive",
     response_model=QuizOut,
@@ -224,14 +191,29 @@ def generate_adaptive(
     )
 
 
+@router.post(
+    "/generate-due",
+    response_model=QuizOut,
+    status_code=201,
+)
+def generate_due(
+    payload: QuizGenerateRequest,
+    db: DbSession,
+    user: CurrentUser,
+):
+    return generate_due_quiz(
+        db=db,
+        owner_id=user.id,
+        payload=payload,
+    )
+
+
 # =========================================================
 # GET QUIZ
 # =========================================================
 
 
-@router.get(
-    "/{quiz_id}"
-)
+@router.get("/{quiz_id}")
 def get_quiz(
     quiz_id: int,
     db: DbSession,
@@ -245,125 +227,58 @@ def get_quiz(
 
     questions = list(
         db.scalars(
-            select(
-                Question
-            )
-            .where(
-                Question.quiz_id
-                == quiz.id
-            )
-            .order_by(
-                Question.question_order
-            )
+            select(Question)
+            .where(Question.quiz_id == quiz.id)
+            .order_by(Question.question_order)
         ).all()
     )
 
-    data = (
-        QuizOut
-        .model_validate(
-            quiz
-        )
-        .model_dump()
-    )
+    data = QuizOut.model_validate(quiz).model_dump()
 
-    data[
-        "questions"
-    ] = []
+    data["questions"] = []
 
     for question in questions:
 
         options = list(
             db.scalars(
-                select(
-                    QuestionOption
-                )
-                .where(
-                    QuestionOption.question_id
-                    == question.id
-                )
-                .order_by(
-                    QuestionOption.position
-                )
+                select(QuestionOption)
+                .where(QuestionOption.question_id == question.id)
+                .order_by(QuestionOption.position)
             ).all()
         )
 
         question_data = {
-            "id":
-                question.id,
-
-            "question_order":
-                question.question_order,
-
-            "question_text":
-                question.question_text,
-
-            "difficulty":
-                question.difficulty,
-
-            "points":
-                float(
-                    question.points
-                ),
-
-            "explanation":
-                (
-                    question.explanation
-                    if (
-                        quiz.owner_id
-                        == user.id
-                    )
-                    else None
-                ),
-
-            "source_chunk_id":
-                (
-                    question.source_chunk_id
-                    if (
-                        quiz.owner_id
-                        == user.id
-                    )
-                    else None
-                ),
-
+            "id": question.id,
+            "question_order": question.question_order,
+            "question_text": question.question_text,
+            "difficulty": question.difficulty,
+            "points": float(question.points),
+            "explanation": (
+                question.explanation if (quiz.owner_id == user.id) else None
+            ),
+            "source_chunk_id": (
+                question.source_chunk_id if (quiz.owner_id == user.id) else None
+            ),
             "options": [
                 {
-                    "id":
-                        option.id,
-
-                    "option_key":
-                        option.option_key,
-
-                    "option_text":
-                        option.option_text,
-
-                    "position":
-                        option.position,
-
+                    "id": option.id,
+                    "option_key": option.option_key,
+                    "option_text": option.option_text,
+                    "position": option.position,
                     **(
                         {
-                            "is_correct":
-                                option.is_correct,
-
-                            "explanation":
-                                option.explanation,
+                            "is_correct": option.is_correct,
+                            "explanation": option.explanation,
                         }
-                        if (
-                            quiz.owner_id
-                            == user.id
-                        )
+                        if (quiz.owner_id == user.id)
                         else {}
                     ),
                 }
-                for option
-                in options
+                for option in options
             ],
         }
 
-        data[
-            "questions"
-        ].append(
-            question_data
-        )
+        data["questions"].append(question_data)
 
     return data
 
@@ -383,15 +298,9 @@ def publish(
     user: CurrentUser,
 ):
     quiz = db.scalar(
-        select(
-            Quiz
-        )
-        .where(
-            Quiz.id
-            == quiz_id,
-
-            Quiz.owner_id
-            == user.id,
+        select(Quiz).where(
+            Quiz.id == quiz_id,
+            Quiz.owner_id == user.id,
         )
     )
 
@@ -435,82 +344,39 @@ def begin_attempt(
 
     questions = list(
         db.scalars(
-            select(
-                Question
-            )
-            .where(
-                Question.quiz_id
-                == quiz.id
-            )
-            .order_by(
-                Question.question_order
-            )
+            select(Question)
+            .where(Question.quiz_id == quiz.id)
+            .order_by(Question.question_order)
         ).all()
     )
 
     return {
-        "attempt_id":
-            attempt.id,
-
-        "quiz_id":
-            quiz.id,
-
-        "started_at":
-            attempt.started_at,
-
-        "duration_minutes":
-            quiz.duration_minutes,
-
+        "attempt_id": attempt.id,
+        "quiz_id": quiz.id,
+        "started_at": attempt.started_at,
+        "duration_minutes": quiz.duration_minutes,
         "questions": [
             {
-                "id":
-                    question.id,
-
-                "question_order":
-                    question.question_order,
-
-                "question_text":
-                    question.question_text,
-
-                "difficulty":
-                    question.difficulty,
-
-                "points":
-                    float(
-                        question.points
-                    ),
-
+                "id": question.id,
+                "question_order": question.question_order,
+                "question_text": question.question_text,
+                "difficulty": question.difficulty,
+                "points": float(question.points),
                 "options": [
                     {
-                        "id":
-                            option.id,
-
-                        "option_key":
-                            option.option_key,
-
-                        "option_text":
-                            option.option_text,
-
-                        "position":
-                            option.position,
+                        "id": option.id,
+                        "option_key": option.option_key,
+                        "option_text": option.option_text,
+                        "position": option.position,
                     }
-                    for option
-                    in db.scalars(
-                        select(
-                            QuestionOption
-                        )
-                        .where(
-                            QuestionOption.question_id
-                            == question.id
-                        )
-                        .order_by(
-                            QuestionOption.position
-                        )
+                    for option in db.scalars(
+                        select(QuestionOption)
+                        .where(QuestionOption.question_id == question.id)
+                        .order_by(QuestionOption.position)
                     ).all()
                 ],
             }
-            for question
-            in questions
+            for question in questions
         ],
     }
 
@@ -531,34 +397,22 @@ def finalize_attempt(
     user: CurrentUser,
 ):
     attempt = db.scalar(
-        select(
-            QuizAttempt
-        )
-        .where(
-            QuizAttempt.id
-            == attempt_id,
-
-            QuizAttempt.user_id
-            == user.id,
+        select(QuizAttempt).where(
+            QuizAttempt.id == attempt_id,
+            QuizAttempt.user_id == user.id,
         )
     )
 
     if attempt is None:
         raise HTTPException(
             status_code=404,
-            detail=(
-                "Attempt not found"
-            ),
+            detail=("Attempt not found"),
         )
 
     return submit_attempt(
         db,
         attempt,
-        [
-            answer.model_dump()
-            for answer
-            in payload.answers
-        ],
+        [answer.model_dump() for answer in payload.answers],
     )
 
 
@@ -567,50 +421,29 @@ def finalize_attempt(
 # =========================================================
 
 
-@router.get(
-    "/attempts/{attempt_id}/result"
-)
+@router.get("/attempts/{attempt_id}/result")
 def attempt_result(
     attempt_id: int,
     db: DbSession,
     user: CurrentUser,
 ):
     attempt = db.scalar(
-        select(
-            QuizAttempt
-        )
-        .where(
-            QuizAttempt.id
-            == attempt_id,
-
-            QuizAttempt.user_id
-            == user.id,
+        select(QuizAttempt).where(
+            QuizAttempt.id == attempt_id,
+            QuizAttempt.user_id == user.id,
         )
     )
 
     if attempt is None:
         raise HTTPException(
             status_code=404,
-            detail=(
-                "Attempt not found"
-            ),
+            detail=("Attempt not found"),
         )
 
-    if (
-        attempt.status
-        != "SUBMITTED"
-    ):
+    if attempt.status != "SUBMITTED":
         raise HTTPException(
             status_code=409,
-            detail=(
-                "Attempt has not "
-                "been submitted"
-            ),
+            detail=("Attempt has not " "been submitted"),
         )
 
-    return (
-        AttemptOut
-        .model_validate(
-            attempt
-        )
-    )
+    return AttemptOut.model_validate(attempt)

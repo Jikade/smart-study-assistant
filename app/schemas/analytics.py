@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel
@@ -78,4 +78,69 @@ class PracticeRecommendationResponse(
 
     recommendations: list[
         PracticeRecommendationItem
+    ]
+
+# =========================================================
+# SPACED PRACTICE / STUDY PLAN
+# =========================================================
+
+
+class SpacedPracticeItem(BaseModel):
+    section_id: int
+    title: str
+
+    attempts: int
+    correct_answers: int
+    wrong_answers: int
+    mastery_score: float
+    mastery_status: str
+
+    interval_days: int
+
+    last_practiced_at: (
+        datetime
+        | None
+    )
+
+    next_review_at: datetime
+
+    scheduled_date: date
+
+    due_status: str
+
+    priority_score: float
+
+    reason: str
+
+
+class StudyPlanDay(BaseModel):
+    date: date
+
+    item_count: int
+
+    items: list[
+        SpacedPracticeItem
+    ]
+
+
+class StudyPlanResponse(BaseModel):
+    subject_id: int
+    subject_name: str
+
+    generated_at: datetime
+
+    horizon_days: int
+
+    algorithm: str
+
+    total_topics: int
+
+    scheduled_topics: int
+
+    due_topics: int
+
+    deferred_topics: int
+
+    days: list[
+        StudyPlanDay
     ]

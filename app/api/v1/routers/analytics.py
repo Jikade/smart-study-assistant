@@ -17,11 +17,13 @@ from app.api.deps import (
 from app.db.models import User
 from app.schemas.analytics import (
     PracticeRecommendationResponse,
+    StudyPlanResponse,
     SubjectTopicMasteryResponse,
     WeakTopicsResponse,
 )
 from app.services.analytics_service import (
     get_practice_recommendations,
+    get_subject_study_plan,
     get_subject_topic_mastery,
     get_weak_topics,
 )
@@ -70,6 +72,23 @@ def practice_recommendations(
         db,
         user_id=user.id,
         subject_id=subject_id,
+    )
+
+@router.get(
+    "/subjects/{subject_id}/study-plan",
+    response_model=StudyPlanResponse,
+)
+def subject_study_plan(
+    subject_id: int,
+    db: DbSession,
+    user: CurrentUser,
+    horizon_days: int = 7,
+):
+    return get_subject_study_plan(
+        db,
+        user_id=user.id,
+        subject_id=subject_id,
+        horizon_days=horizon_days,
     )
 
 # =========================================================

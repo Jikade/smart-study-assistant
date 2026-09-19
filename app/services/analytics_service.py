@@ -4,6 +4,12 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from datetime import (
+    date,
+    datetime,
+    timedelta,
+)
+
 
 # =========================================================
 # MASTERY RULES
@@ -571,6 +577,675 @@ def get_practice_recommendations(
             recommendations,
     }
 
+# =========================================================
+# SPACED PRACTICE SCHEDULER
+# =========================================================
+
+
+SPACED_PRACTICE_ALGORITHM = (
+    "SSA-SR-V1"
+)
+
+
+SPACED_STATUS_WEIGHT = {
+    "WEAK": 400,
+    "DEVELOPING": 300,
+    "NOT_ENOUGH_DATA": 250,
+    "STRONG": 100,
+}
+
+
+def _spacing_interval_days(
+    *,
+    status: str,
+    mastery_score: float,
+    attempts: int,
+) -> int:
+    """
+    Smart Study Assistant Spaced Repetition V1.
+
+    The interval is controlled completely
+    by backend rules.
+
+    No LLM is involved.
+    """
+
+    status = str(
+        status or ""
+    ).upper()
+
+    score = float(
+        mastery_score
+        or 0
+    )
+
+    attempts = max(
+        0,
+        int(
+            attempts
+            or 0
+        ),
+    )
+
+    # =====================================================
+    # NOT ENOUGH DATA
+    #
+    # Needs another observation as soon as possible.
+    # =====================================================
+
+    if (
+        status
+        == "NOT_ENOUGH_DATA"
+    ):
+        return 0
+
+    # =====================================================
+    # WEAK
+    # =====================================================
+
+    if status == "WEAK":
+
+        if score < 40:
+            return 1
+
+        return 2
+
+    # =====================================================
+    # DEVELOPING
+    # =====================================================
+
+    if status == "DEVELOPING":
+
+        if score < 70:
+            return 2
+
+        return 3
+
+    # =====================================================
+    # STRONG
+    # =====================================================
+
+    if status == "STRONG":
+
+        if (
+            score >= 95
+            and attempts >= 4
+        ):
+            return 14
+
+        if score >= 90:
+            return 10
+
+        return 7
+
+    # Defensive fallback.
+    return 1
+
+
+def _normalize_learning_datetime(
+    value: datetime | None,
+    *,
+    now: datetime,
+) -> datetime | None:
+    """
+    Normalize DB datetime into the same timezone
+    used by current server time.
+    """
+
+    if value is None:
+        return None
+
+    if value.tzinfo is None:
+        return value.replace(
+            tzinfo=now.tzinfo
+        )
+
+    return value.astimezone(
+        now.tzinfo
+    )
+
+
+def _spacing_due_status(
+    *,
+    now: datetime,
+    next_review_at: datetime,
+    never_practiced: bool,
+) -> str:
+
+    if never_practiced:
+        return "NEW"
+
+    if next_review_at <= now:
+        return "DUE"
+
+    if (
+        next_review_at.date()
+        == now.date()
+    ):
+        return "DUE_TODAY"
+
+    return "UPCOMING"
+
+
+def _spacing_priority_score(
+    *,
+    status: str,
+    mastery_score: float,
+    attempts: int,
+    next_review_at: datetime,
+    now: datetime,
+) -> float:
+    """
+    Higher score = higher study priority.
+
+    Components:
+      status importance
+      weakness
+      data uncertainty
+      whether already due
+      how many days overdue
+    """
+
+    status = str(
+        status or ""
+    ).upper()
+
+    mastery_score = float(
+        mastery_score
+        or 0
+    )
+
+    attempts = max(
+        0,
+        int(
+            attempts
+            or 0
+        ),
+    )
+
+    status_weight = float(
+        SPACED_STATUS_WEIGHT.get(
+            status,
+            0,
+        )
+    )
+
+    weakness_bonus = max(
+        0.0,
+        100.0
+        - mastery_score,
+    )
+
+    # attempts < 2 means mastery is not reliable yet.
+    uncertainty_bonus = float(
+        max(
+            0,
+            2 - attempts,
+        )
+        * 40
+    )
+
+    due_bonus = (
+        100.0
+        if (
+            next_review_at
+            <= now
+        )
+        else 0.0
+    )
+
+    overdue_days = max(
+        0,
+        (
+            now.date()
+            - next_review_at.date()
+        ).days,
+    )
+
+    overdue_bonus = float(
+        min(
+            overdue_days,
+            30,
+        )
+        * 10
+    )
+
+    return round(
+        status_weight
+        + weakness_bonus
+        + uncertainty_bonus
+        + due_bonus
+        + overdue_bonus,
+        2,
+    )
+
+
+def _spacing_reason(
+    *,
+    status: str,
+    mastery_score: float,
+    attempts: int,
+    interval_days: int,
+) -> str:
+
+    status = str(
+        status or ""
+    ).upper()
+
+    score = float(
+        mastery_score
+        or 0
+    )
+
+    attempts = int(
+        attempts
+        or 0
+    )
+
+    if (
+        status
+        == "NOT_ENOUGH_DATA"
+    ):
+        return (
+            f"Only {attempts} attempt(s) are available. "
+            "Another practice session is scheduled "
+            "to obtain enough mastery evidence."
+        )
+
+    if status == "WEAK":
+        return (
+            f"Mastery is {score:.2f}%. "
+            f"Review again after {interval_days} "
+            "day(s) because this topic is WEAK."
+        )
+
+    if status == "DEVELOPING":
+        return (
+            f"Mastery is {score:.2f}%. "
+            f"Review after {interval_days} "
+            "day(s) to reinforce the topic."
+        )
+
+    if status == "STRONG":
+        return (
+            f"Mastery is {score:.2f}%. "
+            f"The topic is STRONG, so its review "
+            f"interval is expanded to "
+            f"{interval_days} day(s)."
+        )
+
+    return (
+        f"Review after "
+        f"{interval_days} day(s)."
+    )
+
+
+def get_subject_study_plan(
+    db: Session,
+    *,
+    user_id: int,
+    subject_id: int,
+    horizon_days: int = 7,
+) -> dict:
+    """
+    Generate a dynamic spaced-practice calendar.
+
+    V1 does not persist scheduling rows.
+
+    Every request recalculates the plan from:
+      - TopicMastery
+      - mastery status
+      - attempts
+      - mastery_score
+      - last_practiced_at
+
+    This ensures the study plan automatically changes
+    after every quiz attempt.
+    """
+
+    # =====================================================
+    # VALIDATE HORIZON
+    # =====================================================
+
+    if not 1 <= horizon_days <= 90:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "horizon_days must be "
+                "between 1 and 90."
+            ),
+        )
+
+    # =====================================================
+    # LOAD CURRENT MASTERY
+    # =====================================================
+
+    mastery = (
+        get_subject_topic_mastery(
+            db,
+            user_id=user_id,
+            subject_id=subject_id,
+        )
+    )
+
+    topics = list(
+        mastery.get(
+            "topics",
+            []
+        )
+    )
+
+    # Use server local timezone.
+    now = (
+        datetime.now()
+        .astimezone()
+    )
+
+    today = now.date()
+
+    horizon_end = (
+        today
+        + timedelta(
+            days=(
+                horizon_days
+                - 1
+            )
+        )
+    )
+
+    # =====================================================
+    # CREATE CALENDAR BUCKETS
+    # =====================================================
+
+    day_buckets: dict[
+        date,
+        list[dict],
+    ] = {
+        (
+            today
+            + timedelta(
+                days=offset
+            )
+        ): []
+
+        for offset
+        in range(
+            horizon_days
+        )
+    }
+
+    scheduled_topics = 0
+    due_topics = 0
+    deferred_topics = 0
+
+    # =====================================================
+    # CALCULATE ONE REVIEW DATE PER TOPIC
+    # =====================================================
+
+    for topic in topics:
+
+        status = str(
+            topic.get(
+                "status",
+                "",
+            )
+        ).upper()
+
+        score = float(
+            topic.get(
+                "mastery_score",
+                0,
+            )
+            or 0
+        )
+
+        attempts = int(
+            topic.get(
+                "attempts",
+                0,
+            )
+            or 0
+        )
+
+        interval_days = (
+            _spacing_interval_days(
+                status=status,
+                mastery_score=score,
+                attempts=attempts,
+            )
+        )
+
+        last_practiced_at = (
+            _normalize_learning_datetime(
+                topic.get(
+                    "last_practiced_at"
+                ),
+                now=now,
+            )
+        )
+
+        never_practiced = (
+            last_practiced_at
+            is None
+        )
+
+        if never_practiced:
+
+            # New / insufficiently measured topic
+            # should be available immediately.
+            next_review_at = now
+
+        else:
+
+            next_review_at = (
+                last_practiced_at
+                + timedelta(
+                    days=interval_days
+                )
+            )
+
+        due_status = (
+            _spacing_due_status(
+                now=now,
+                next_review_at=(
+                    next_review_at
+                ),
+                never_practiced=(
+                    never_practiced
+                ),
+            )
+        )
+
+        priority_score = (
+            _spacing_priority_score(
+                status=status,
+                mastery_score=score,
+                attempts=attempts,
+                next_review_at=(
+                    next_review_at
+                ),
+                now=now,
+            )
+        )
+
+        # Overdue topics are placed today.
+        scheduled_date = max(
+            today,
+            next_review_at.date(),
+        )
+
+        item = {
+            "section_id":
+                int(
+                    topic[
+                        "section_id"
+                    ]
+                ),
+
+            "title":
+                topic[
+                    "title"
+                ],
+
+            "attempts":
+                attempts,
+
+            "correct_answers":
+                int(
+                    topic.get(
+                        "correct_answers",
+                        0,
+                    )
+                    or 0
+                ),
+
+            "wrong_answers":
+                int(
+                    topic.get(
+                        "wrong_answers",
+                        0,
+                    )
+                    or 0
+                ),
+
+            "mastery_score":
+                score,
+
+            "mastery_status":
+                status,
+
+            "interval_days":
+                interval_days,
+
+            "last_practiced_at":
+                last_practiced_at,
+
+            "next_review_at":
+                next_review_at,
+
+            "scheduled_date":
+                scheduled_date,
+
+            "due_status":
+                due_status,
+
+            "priority_score":
+                priority_score,
+
+            "reason":
+                _spacing_reason(
+                    status=status,
+                    mastery_score=score,
+                    attempts=attempts,
+                    interval_days=(
+                        interval_days
+                    ),
+                ),
+        }
+
+        if next_review_at <= now:
+            due_topics += 1
+
+        # =================================================
+        # WITHIN REQUESTED HORIZON
+        # =================================================
+
+        if (
+            scheduled_date
+            <= horizon_end
+        ):
+            day_buckets[
+                scheduled_date
+            ].append(
+                item
+            )
+
+            scheduled_topics += 1
+
+        else:
+            deferred_topics += 1
+
+    # =====================================================
+    # SORT EACH DAY BY PRIORITY
+    # =====================================================
+
+    days: list[dict] = []
+
+    for plan_date in sorted(
+        day_buckets
+    ):
+
+        items = day_buckets[
+            plan_date
+        ]
+
+        items.sort(
+            key=lambda item: (
+                -float(
+                    item[
+                        "priority_score"
+                    ]
+                ),
+                int(
+                    item[
+                        "section_id"
+                    ]
+                ),
+            )
+        )
+
+        days.append(
+            {
+                "date":
+                    plan_date,
+
+                "item_count":
+                    len(
+                        items
+                    ),
+
+                "items":
+                    items,
+            }
+        )
+
+    return {
+        "subject_id":
+            mastery[
+                "subject_id"
+            ],
+
+        "subject_name":
+            mastery[
+                "subject_name"
+            ],
+
+        "generated_at":
+            now,
+
+        "horizon_days":
+            horizon_days,
+
+        "algorithm":
+            SPACED_PRACTICE_ALGORITHM,
+
+        "total_topics":
+            len(
+                topics
+            ),
+
+        "scheduled_topics":
+            scheduled_topics,
+
+        "due_topics":
+            due_topics,
+
+        "deferred_topics":
+            deferred_topics,
+
+        "days":
+            days,
+    }
 
 # =========================================================
 # WEAK TOPICS
