@@ -1,3 +1,4 @@
+// SSA-FE-LR-V1
 import { api, ENDPOINT_CATALOG } from './api.js';
 import { state, saveAuth, saveUi, logoutLocal, isAuthed } from './state.js';
 import { esc, fmtDate, fmtBytes, toast, modal, closeModal, button, badge, emptyState, skeletonCards, setBusy, icon, revealElements, initTilt } from './ui.js';
@@ -94,11 +95,91 @@ export async function chatView(){ const convos=await api.listConversations(50); 
 
 export async function quizzesView(){ const items=await api.listQuizzes({limit:100}); return `${pageHeader('Quiz','Luyện tập có chủ đích.','Tạo thủ công hoặc dùng AI: normal, weak-topic, adaptive và due.',`<div class="button-cluster">${button('Tạo AI quiz',{iconName:'spark',attrs:'data-generate-quiz'})}${button('Tạo thủ công',{variant:'soft',attrs:'data-create-quiz'})}</div>`)}${items.length?`<div class="card-grid">${items.map(q=>`<article class="surface quiz-card reveal" data-tilt><div class="quiz-top"><span class="quiz-index">${String(q.id).padStart(2,'0')}</span>${badge(q.status,statusTone(q.status))}</div><h3>${esc(q.title)}</h3><p>${esc(q.description||`${q.question_count} câu hỏi`)}</p><div class="meta-row"><span>${esc(q.difficulty)}</span><span>${q.duration_minutes?`${q.duration_minutes} phút`:'Không giới hạn'}</span><span>${esc(q.generation_mode)}</span></div><div class="card-actions">${button('Mở quiz',{variant:'soft',attrs:`data-quiz-id="${q.id}"`})}${q.status!=='PUBLISHED'?button('Publish',{variant:'ghost',attrs:`data-publish-quiz="${q.id}"`}):''}</div></article>`).join('')}</div>`:emptyState('Chưa có quiz','Tạo quiz đầu tiên từ tài liệu của bạn.')}`; }
 
-export async function flashcardsView(){ const [decks,due]=await Promise.all([api.listDecks(100),api.dueCards(100)]); return `${pageHeader('Flashcards','Ôn đúng lúc, không ôn quá mức.','Rating 0–3 cập nhật lịch review theo spaced repetition.',`<div class="button-cluster">${button(`Ôn ${due.length} thẻ đến hạn`,{attrs:'data-review-due'})}${button('Tạo deck AI',{variant:'soft',attrs:'data-generate-deck'})}</div>`)}<div class="stats-grid compact"><div class="stat-card accent-lime"><span>Đến hạn</span><strong>${due.length}</strong></div><div class="stat-card accent-lavender"><span>Deck</span><strong>${decks.length}</strong></div></div>${decks.length?`<div class="card-grid">${decks.map(d=>`<article class="surface deck-card reveal" data-tilt><div class="deck-stack"><i></i><i></i><span>${esc(d.title.slice(0,1).toUpperCase())}</span></div><div><div class="row-between"><h3>${esc(d.title)}</h3>${badge(d.status,statusTone(d.status))}</div><p>${esc(d.description||'Bộ thẻ học tập')}</p><div class="meta-row"><span>${esc(d.generation_mode)}</span><span>${esc(d.visibility)}</span></div>${button('Mở deck',{variant:'soft',attrs:`data-deck-id="${d.id}"`})}</div></article>`).join('')}</div>`:emptyState('Chưa có flashcard deck','Hãy tạo deck từ tài liệu để bắt đầu lặp lại ngắt quãng.')}`; }
+export async function flashcardsView(){
+  // SSA-FE-LR-V1: one auxiliary request must not make the whole page unusable.
+  const [decksResult,dueResult]=await Promise.allSettled([
+    api.listDecks(100),
+    api.dueCards(100),
+  ]);
+
+  if(decksResult.status!=='fulfilled') throw decksResult.reason;
+
+  const decks=decksResult.value||[];
+  const due=dueResult.status==='fulfilled'?(dueResult.value||[]):[];
+  const dueWarning=dueResult.status==='rejected'
+    ? `<div class="surface reveal"><div class="error-box">Không tải được lịch flashcard đến hạn: ${esc(dueResult.reason?.message||'Unknown error')}. Danh sách deck vẫn được hiển thị.</div></div>`
+    : '';
+
+  return `${pageHeader(
+    'Flashcards',
+    'Ôn đúng lúc, không ôn quá mức.',
+    'Rating 0–3 cập nhật lịch review theo spaced repetition.',
+    `<div class="button-cluster">${button(
+      `Ôn ${due.length} thẻ đến hạn`,
+      {attrs:'data-review-due'}
+    )}${button(
+      'Tạo deck AI',
+      {variant:'soft',attrs:'data-generate-deck'}
+    )}</div>`
+  )}${dueWarning}<div class="stats-grid compact"><div class="stat-card accent-lime"><span>Đến hạn</span><strong>${due.length}</strong></div><div class="stat-card accent-lavender"><span>Deck</span><strong>${decks.length}</strong></div></div>${decks.length?`<div class="card-grid">${decks.map(d=>`<article class="surface deck-card reveal" data-tilt><div class="deck-stack"><i></i><i></i><span>${esc(d.title.slice(0,1).toUpperCase())}</span></div><div><div class="row-between"><h3>${esc(d.title)}</h3>${badge(d.status,statusTone(d.status))}</div><p>${esc(d.description||'Bộ thẻ học tập')}</p><div class="meta-row"><span>${esc(d.generation_mode)}</span><span>${esc(d.visibility)}</span></div>${button('Mở deck',{variant:'soft',attrs:`data-deck-id="${d.id}"`})}</div></article>`).join('')}</div>`:emptyState('Chưa có flashcard deck','Hãy tạo deck từ tài liệu để bắt đầu lặp lại ngắt quãng.')}`;
+}
 
 export async function studyPlansView(){ const plans=await api.listStudyPlans(); return `${pageHeader('Kế hoạch học','Biến deadline thành lịch học vừa sức.','Tạo kế hoạch theo ngày thi và ngân sách phút học mỗi ngày.',button('Tạo kế hoạch',{iconName:'plus',attrs:'data-generate-plan'}))}${plans.length?`<div class="plan-list">${plans.map(p=>`<article class="surface plan-row reveal"><div class="plan-date"><b>${new Date(p.exam_date||p.start_date).getDate()}</b><span>${new Intl.DateTimeFormat('vi-VN',{month:'short'}).format(new Date(p.exam_date||p.start_date))}</span></div><div class="plan-main"><div class="row-between"><h3>${esc(p.title)}</h3>${badge(p.status,statusTone(p.status))}</div><p>${fmtDate(p.start_date)} → ${fmtDate(p.exam_date)} · ${p.daily_minutes} phút/ngày</p></div><button class="btn btn-soft" data-plan-id="${p.id}">Mở kế hoạch</button></article>`).join('')}</div>`:emptyState('Chưa có kế hoạch','Tạo kế hoạch dựa trên ngày bắt đầu, ngày thi và thời lượng học mỗi ngày.')}`; }
 
-export async function analyticsView(){ const subjects=await getSubjects(); const sid=selectedSubject()||subjects[0]?.id; if(!sid) return `${pageHeader('Analytics','Đọc dữ liệu học tập.','Mastery, weak topics và recommendations giúp quyết định học gì tiếp theo.')}${emptyState('Cần ít nhất một môn học','Tạo môn học và luyện quiz để analytics có dữ liệu.')}`; saveUi({selectedSubjectId:sid}); const [mastery,weak,recs,plan]=await Promise.all([api.topicMastery(sid),api.weakTopics(sid),api.practiceRecommendations(sid),api.analyticsStudyPlan(sid,7)]); return `${pageHeader('Analytics',esc(mastery.subject_name),'Theo dõi mức độ nắm vững từng topic và lịch spaced practice.',`<select class="input subject-switch" data-analytics-subject>${subjects.map(s=>`<option value="${s.id}" ${s.id===sid?'selected':''}>${esc(s.name)}</option>`).join('')}</select>`)}<section class="stats-grid"><div class="stat-card accent-black"><span>Tổng topic</span><strong>${mastery.summary.total_topics}</strong></div><div class="stat-card accent-peach"><span>Weak</span><strong>${mastery.summary.weak_topics}</strong></div><div class="stat-card accent-lavender"><span>Developing</span><strong>${mastery.summary.developing_topics}</strong></div><div class="stat-card accent-lime"><span>Strong</span><strong>${mastery.summary.strong_topics}</strong></div></section><section class="analytics-grid"><div class="surface reveal"><div class="surface-head"><div><span class="eyebrow">Topic mastery</span><h3>Mức độ nắm vững</h3></div></div><div class="mastery-list">${mastery.topics.map(t=>`<div class="mastery-row"><div><strong>${esc(t.title)}</strong><small>${t.attempts} attempts · ${t.correct_answers} đúng</small></div><div class="mastery-bar"><i style="width:${Math.max(0,Math.min(100,t.mastery_score*100))}%"></i></div>${badge(t.status,statusTone(t.status))}</div>`).join('')||'<p class="muted">Chưa có topic data.</p>'}</div></div><div class="surface reveal"><div class="surface-head"><div><span class="eyebrow">Ưu tiên</span><h3>Đề xuất luyện tập</h3></div><span>${recs.strategy||''}</span></div><div class="recommend-list">${recs.recommendations.map(r=>`<div class="recommend-item"><b>#${r.rank}</b><div><strong>${esc(r.title)}</strong><p>${esc(r.reason)}</p></div></div>`).join('')||'<p class="muted">Chưa có đề xuất.</p>'}</div></div></section><section class="surface reveal"><div class="surface-head"><div><span class="eyebrow">7 ngày tới</span><h3>Spaced practice</h3></div><span>${plan.algorithm}</span></div><div class="timeline">${plan.days.map(d=>`<div class="timeline-day"><div class="timeline-date"><b>${new Date(d.date).getDate()}</b><span>${new Intl.DateTimeFormat('vi-VN',{weekday:'short'}).format(new Date(d.date))}</span></div><div>${d.items.map(i=>`<div class="timeline-item"><strong>${esc(i.title)}</strong><small>${i.interval_days} ngày · priority ${Number(i.priority_score).toFixed(2)} · ${esc(i.due_status)}</small></div>`).join('')||'<span class="muted">Không có topic</span>'}</div></div>`).join('')}</div></section><section class="surface reveal"><div class="surface-head"><div><span class="eyebrow">Weak topics</span><h3>${weak.count} topic cần chú ý</h3></div></div><div class="chip-wrap">${weak.topics.map(x=>`<span class="topic-chip">${esc(x.title)} · ${(x.mastery_score*100).toFixed(0)}%</span>`).join('')||'<span class="muted">Không có weak topic theo ngưỡng hiện tại.</span>'}</div></section>`; }
+export async function analyticsView(){
+  const subjects=await getSubjects();
+  const sid=selectedSubject()||subjects[0]?.id;
+
+  if(!sid) return `${pageHeader(
+    'Analytics',
+    'Đọc dữ liệu học tập.',
+    'Mastery, weak topics và recommendations giúp quyết định học gì tiếp theo.'
+  )}${emptyState(
+    'Cần ít nhất một môn học',
+    'Tạo môn học và luyện quiz để analytics có dữ liệu.'
+  )}`;
+
+  saveUi({selectedSubjectId:sid});
+
+  // SSA-FE-LR-V1: mastery is the primary dataset.  Optional analytics
+  // panels degrade independently instead of crashing the whole route.
+  const [masteryResult,weakResult,recsResult,planResult]=await Promise.allSettled([
+    api.topicMastery(sid),
+    api.weakTopics(sid),
+    api.practiceRecommendations(sid),
+    api.analyticsStudyPlan(sid,7),
+  ]);
+
+  if(masteryResult.status!=='fulfilled') throw masteryResult.reason;
+
+  const mastery=masteryResult.value;
+  const weak=weakResult.status==='fulfilled'
+    ? weakResult.value
+    : {count:0,topics:[]};
+  const recs=recsResult.status==='fulfilled'
+    ? recsResult.value
+    : {strategy:'Unavailable',recommendations:[]};
+  const plan=planResult.status==='fulfilled'
+    ? planResult.value
+    : {algorithm:'Unavailable',days:[]};
+
+  const warnings=[
+    weakResult.status==='rejected'?'weak topics':null,
+    recsResult.status==='rejected'?'recommendations':null,
+    planResult.status==='rejected'?'study plan':null,
+  ].filter(Boolean);
+
+  const warningHtml=warnings.length
+    ? `<section class="surface reveal"><div class="error-box">Một phần Analytics tạm thời không tải được: ${esc(warnings.join(', '))}. Topic mastery vẫn được hiển thị.</div></section>`
+    : '';
+
+  return `${pageHeader(
+    'Analytics',
+    esc(mastery.subject_name),
+    'Theo dõi mức độ nắm vững từng topic và lịch spaced practice.',
+    `<select class="input subject-switch" data-analytics-subject>${subjects.map(s=>`<option value="${s.id}" ${s.id===sid?'selected':''}>${esc(s.name)}</option>`).join('')}</select>`
+  )}${warningHtml}<section class="stats-grid"><div class="stat-card accent-black"><span>Tổng topic</span><strong>${mastery.summary.total_topics}</strong></div><div class="stat-card accent-peach"><span>Weak</span><strong>${mastery.summary.weak_topics}</strong></div><div class="stat-card accent-lavender"><span>Developing</span><strong>${mastery.summary.developing_topics}</strong></div><div class="stat-card accent-lime"><span>Strong</span><strong>${mastery.summary.strong_topics}</strong></div></section><section class="analytics-grid"><div class="surface reveal"><div class="surface-head"><div><span class="eyebrow">Topic mastery</span><h3>Mức độ nắm vững</h3></div></div><div class="mastery-list">${mastery.topics.map(t=>{const score=Math.max(0,Math.min(100,Number(t.mastery_score||0)));return `<div class="mastery-row"><div><strong>${esc(t.title)}</strong><small>${t.attempts} attempts · ${t.correct_answers} đúng · ${score.toFixed(1)}%</small></div><div class="mastery-bar"><i style="width:${score}%"></i></div>${badge(t.status,statusTone(t.status))}</div>`;}).join('')||'<p class="muted">Chưa có topic data.</p>'}</div></div><div class="surface reveal"><div class="surface-head"><div><span class="eyebrow">Ưu tiên</span><h3>Đề xuất luyện tập</h3></div><span>${esc(recs.strategy||'')}</span></div><div class="recommend-list">${(recs.recommendations||[]).map(r=>`<div class="recommend-item"><b>#${r.rank}</b><div><strong>${esc(r.title)}</strong><p>${esc(r.reason)}</p></div></div>`).join('')||'<p class="muted">Chưa có đề xuất.</p>'}</div></div></section><section class="surface reveal"><div class="surface-head"><div><span class="eyebrow">7 ngày tới</span><h3>Spaced practice</h3></div><span>${esc(plan.algorithm||'')}</span></div><div class="timeline">${(plan.days||[]).map(d=>`<div class="timeline-day"><div class="timeline-date"><b>${new Date(d.date).getDate()}</b><span>${new Intl.DateTimeFormat('vi-VN',{weekday:'short'}).format(new Date(d.date))}</span></div><div>${d.items.map(i=>`<div class="timeline-item"><strong>${esc(i.title)}</strong><small>${i.interval_days} ngày · priority ${Number(i.priority_score).toFixed(2)} · ${esc(i.due_status)}</small></div>`).join('')||'<span class="muted">Không có topic</span>'}</div></div>`).join('')||'<p class="muted">Chưa có lịch spaced practice.</p>'}</div></section><section class="surface reveal"><div class="surface-head"><div><span class="eyebrow">Weak topics</span><h3>${weak.count||0} topic cần chú ý</h3></div></div><div class="chip-wrap">${(weak.topics||[]).map(x=>`<span class="topic-chip">${esc(x.title)} · ${Math.max(0,Math.min(100,Number(x.mastery_score||0))).toFixed(0)}%</span>`).join('')||'<span class="muted">Không có weak topic theo ngưỡng hiện tại.</span>'}</div></section>`;
+}
 
 export async function communityView(){ const posts=await api.communityPosts({limit:50,offset:0}); return `${pageHeader('Cộng đồng','Học cùng nhau mà không lộ nguồn riêng tư.','Publish quiz/deck, like, save và fork nội dung công khai.',button('Chia sẻ tài nguyên',{iconName:'plus',attrs:'data-publish-community'}))}${posts.length?`<div class="community-grid">${posts.map(p=>{const id=p.post_id??p.id; return `<article class="surface community-card reveal"><div class="community-visual ${p.resource_type==='QUIZ'?'visual-quiz':'visual-deck'}"><span>${esc(p.resource_type||'STUDY')}</span><b>${esc((p.title||'Shared resource').slice(0,1))}</b></div><div class="community-body"><span class="eyebrow">${esc(p.resource_type||'RESOURCE')}</span><h3>${esc(p.title||'Tài nguyên học tập')}</h3><p>${esc(p.description||'Được chia sẻ trong cộng đồng Smart Study.')}</p><div class="community-actions"><button class="chip-btn" data-like-post="${id}">♡ Like</button><button class="chip-btn" data-save-post="${id}">⌑ Save</button><button class="chip-btn dark" data-fork-post="${id}">Fork ↗</button></div></div></article>`}).join('')}</div>`:emptyState('Cộng đồng đang trống','Hãy publish một quiz hoặc flashcard deck đầu tiên.')}`; }
 
