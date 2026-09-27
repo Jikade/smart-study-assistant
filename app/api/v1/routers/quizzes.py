@@ -15,6 +15,7 @@ from app.db.models import (
     QuestionOption,
     Quiz,
     QuizAttempt,
+    UserAnswer,
 )
 from app.schemas.quizzes import (
     AttemptOut,
@@ -675,4 +676,116 @@ def attempt_result(
             detail=("Attempt has not " "been submitted"),
         )
 
-    return AttemptOut.model_validate(attempt)
+    questions = list(
+        db.scalars(
+            select(Question)
+            .where(Question.quiz_id == attempt.quiz_id)
+            .order_by(Question.question_order)
+        ).all()
+    )
+
+    answer_rows = list(
+        db.scalars(
+            select(UserAnswer).where(
+                UserAnswer.attempt_id == attempt.id
+            )
+        ).all()
+    )
+
+    answers_by_question = {
+        int(row.question_id): row
+        for row in answer_rows
+    }
+
+    details = []
+
+    for question in questions:
+        options = list(
+            db.scalars(
+                select(QuestionOption)
+                .where(
+                    QuestionOption.question_id == question.id
+                )
+                .order_by(QuestionOption.position)
+            ).all()
+        )
+
+        answer = answers_by_question.get(int(question.id))
+        selected_option = None
+
+        if answer is not None and answer.selected_option_id is not None:
+            selected_option = next(
+                (
+                    option
+                    for option in options
+                    if int(option.id) == int(answer.selected_option_id)
+                ),
+                None,
+            )
+
+        correct_option = next(
+            (option for option in options if option.is_correct),
+            None,
+        )
+
+        if answer is None or answer.selected_option_id is None:
+            answer_status = "UNANSWERED"
+        elif bool(answer.is_correct):
+            answer_status = "CORRECT"
+        else:
+            answer_status = "WRONG"
+
+        explanation = (
+            question.explanation
+            or (
+                correct_option.explanation
+                if correct_option is not None
+                else None
+            )
+        )
+
+        details.append(
+            {
+                "question_id": int(question.id),
+                "question_order": int(question.question_order),
+                "question_text": question.question_text,
+                "status": answer_status,
+                "is_correct": (
+                    None
+                    if answer_status == "UNANSWERED"
+                    else bool(answer.is_correct)
+                ),
+                "selected_option": (
+                    None
+                    if selected_option is None
+                    else {
+                        "id": int(selected_option.id),
+                        "option_key": str(selected_option.option_key),
+                        "option_text": selected_option.option_text,
+                    }
+                ),
+                "correct_option": (
+                    None
+                    if correct_option is None
+                    else {
+                        "id": int(correct_option.id),
+                        "option_key": str(correct_option.option_key),
+                        "option_text": correct_option.option_text,
+                    }
+                ),
+                "explanation": explanation,
+                "points_awarded": (
+                    float(answer.points_awarded or 0)
+                    if answer is not None
+                    else 0.0
+                ),
+                "points_possible": float(question.points or 0),
+            }
+        )
+
+    summary = AttemptOut.model_validate(attempt).model_dump()
+
+    return {
+        **summary,
+        "answers": details,
+    }
