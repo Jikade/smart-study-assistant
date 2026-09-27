@@ -16,6 +16,6 @@ Frontend API layer: `src/api.js`
 | Analytics | 4 | Analytics dashboard |
 | Gamification | 1 | Dashboard |
 | Community | 5 | Community feed/actions |
-| Exports | 2 | Export jobs |
+| Exports | 3 | Export jobs |
 | Notifications | 2 | Notification center |
-| **Total** | **61** | `#/developer` runtime map |
+| **Total** | **62** | `#/developer` runtime map |

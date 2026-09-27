@@ -99,9 +99,9 @@ Nếu backend chỉ có `localhost:5173` nhưng bạn mở frontend bằng `127.
 4. Refresh token rotation trả token pair mới và được lưu lại.
 5. Nếu refresh thất bại, local auth bị xóa và UI quay về landing/login.
 
-## 61 endpoint được map
+## 62 endpoint được map
 
-`src/api.js` chứa `ENDPOINT_CATALOG` đúng 61 endpoint `/api/v1`, chia theo:
+`src/api.js` chứa `ENDPOINT_CATALOG` đúng 62 endpoint `/api/v1`, chia theo:
 
 - Health: 1
 - Auth: 6
@@ -115,7 +115,7 @@ Nếu backend chỉ có `localhost:5173` nhưng bạn mở frontend bằng `127.
 - Analytics: 4
 - Gamification: 1
 - Community: 5
-- Exports: 2
+- Exports: 3
 - Notifications: 2
 
 Trong app, mở `Developer` từ sidebar card để xem toàn bộ map method/path/JWT.

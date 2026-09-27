@@ -102,6 +102,7 @@ function bindEvents(){
   on('[data-publish-community]','click',()=>publishCommunityModal().then(bindModalEvents));
   on('[data-like-post]','click',communityLike); on('[data-save-post]','click',communitySave); on('[data-fork-post]','click',communityFork);
   on('[data-create-export]','click',()=>exportModal().then(bindModalEvents));
+  on('[data-download-export]','click',downloadExport);
   on('[data-read-notif]','click',markRead);
 
   const profile=document.getElementById('profile-form'); if(profile)profile.addEventListener('submit',saveProfile);
@@ -270,7 +271,25 @@ async function submitCommunity(e){e.preventDefault();const btn=e.submitter;setBu
 async function communityLike(e){const btn=e.currentTarget;try{const r=await api.likePost(Number(btn.dataset.likePost));btn.textContent=`${r.liked?'♥ Liked':'♡ Like'} · ${Number(r.like_count||0)}`}catch(err){toast(err.message,'danger')}}
 async function communitySave(e){const btn=e.currentTarget;try{const r=await api.savePost(Number(btn.dataset.savePost));btn.textContent=`${r.saved?'▣ Saved':'⌑ Save'} · ${Number(r.save_count||0)}`}catch(err){toast(err.message,'danger')}}
 async function communityFork(e){const btn=e.currentTarget;setBusy(btn,true);try{const r=await api.forkPost(Number(btn.dataset.forkPost));toast(`Đã fork ${r.resource_type} #${r.resource_id}`,'success');setBusy(btn,false)}catch(err){toast(err.message,'danger');setBusy(btn,false)}}
-async function submitExport(e){e.preventDefault();const btn=e.submitter;setBusy(btn,true,'Đang xuất…');const fd=new FormData(e.currentTarget);try{await api.createExport({resource_type:fd.get('resource_type'),resource_id:Number(fd.get('resource_id')),file_format:fd.get('file_format')});closeModal();toast('Export đã được tạo','success');render();}catch(err){toast(err.message,'danger');setBusy(btn,false)}}
+async function downloadExport(e){
+  const btn=e.currentTarget;
+  const id=Number(btn.dataset.downloadExport);
+  const filename=btn.dataset.downloadFilename||`export_${id}`;
+  setBusy(btn,true,'Đang tải…');
+  try{
+    const blob=await api.downloadExport(id);
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement('a');
+    link.href=url;
+    link.download=filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    setBusy(btn,false);
+  }catch(err){toast(err.message,'danger');setBusy(btn,false)}
+}
+async function submitExport(e){e.preventDefault();const btn=e.submitter;setBusy(btn,true,'Đang xuất…');const fd=new FormData(e.currentTarget);const [resource_type,rawId]=String(fd.get('resource')||'').split(':');const resource_id=Number(rawId);if(!resource_type||!resource_id){toast('Hãy chọn tài nguyên cần xuất','danger');setBusy(btn,false);return;}try{await api.createExport({resource_type,resource_id,file_format:fd.get('file_format')});closeModal();toast('Export đã được tạo','success');render();}catch(err){toast(err.message,'danger');setBusy(btn,false)}}
 async function markRead(e){try{await api.markNotificationRead(Number(e.currentTarget.dataset.readNotif));render()}catch(err){toast(err.message,'danger')}}
 async function saveProfile(e){e.preventDefault();const btn=e.submitter;setBusy(btn,true);const fd=new FormData(e.currentTarget);try{await api.updateMe({full_name:fd.get('full_name')||undefined,avatar_url:fd.get('avatar_url')||null,timezone:fd.get('timezone')||undefined,locale:fd.get('locale')||undefined});const user=await api.me();saveAuth({...state.auth,user});toast('Đã lưu hồ sơ và cập nhật avatar','success');render();}catch(err){toast(err.message,'danger');setBusy(btn,false)}}
 

@@ -16,7 +16,7 @@ export const ENDPOINT_CATALOG = [
   ['GET','/analytics/subjects/{subject_id}/topic-mastery',true,'Analytics'], ['GET','/analytics/subjects/{subject_id}/practice-recommendations',true,'Analytics'], ['GET','/analytics/subjects/{subject_id}/study-plan',true,'Analytics'], ['GET','/analytics/subjects/{subject_id}/weak-topics',true,'Analytics'],
   ['GET','/gamification/me',true,'Gamification'],
   ['GET','/community/posts',false,'Community'], ['POST','/community/posts',true,'Community'], ['POST','/community/posts/{post_id}/like',true,'Community'], ['POST','/community/posts/{post_id}/save',true,'Community'], ['POST','/community/posts/{post_id}/fork',true,'Community'],
-  ['POST','/exports',true,'Exports'], ['GET','/exports',true,'Exports'],
+  ['POST','/exports',true,'Exports'], ['GET','/exports',true,'Exports'], ['GET','/exports/{export_id}/download',true,'Exports'],
   ['GET','/notifications',true,'Notifications'], ['POST','/notifications/{notification_id}/read',true,'Notifications'],
 ];
 
@@ -81,6 +81,40 @@ function json(method, path, body, params) {
 }
 
 function query(path, params) { return json('GET', path, null, params); }
+
+async function rawBlob(path, allowRefresh = true) {
+  const headers = new Headers();
+  if (state.auth?.access_token) headers.set('Authorization', `Bearer ${state.auth.access_token}`);
+  const response = await fetch(`${API_BASE}${path}`, { headers });
+
+  if (response.status === 401 && allowRefresh && state.auth?.refresh_token) {
+    try {
+      if (!refreshing) refreshing = refreshTokens();
+      await refreshing;
+      refreshing = null;
+      return rawBlob(path, false);
+    } catch (err) {
+      refreshing = null;
+      logoutLocal();
+      window.dispatchEvent(new CustomEvent('ssa:auth-expired'));
+      throw err;
+    }
+  }
+
+  if (!response.ok) {
+    const contentType = response.headers.get('content-type') || '';
+    let data = null;
+    if (contentType.includes('application/json')) data = await response.json().catch(() => null);
+    else data = await response.text().catch(() => '');
+    const detail = data?.detail;
+    const message = Array.isArray(detail)
+      ? detail.map(x => x?.msg || JSON.stringify(x)).join('; ')
+      : detail || data?.message || (typeof data === 'string' && data) || `HTTP ${response.status}`;
+    throw new ApiError(message, response.status, data);
+  }
+
+  return response.blob();
+}
 
 export async function refreshTokens() {
   if (!state.auth?.refresh_token) throw new ApiError('Không có refresh token', 401);
@@ -167,6 +201,7 @@ export const api = {
 
   createExport: payload => json('POST','/exports',payload),
   listExports: () => query('/exports'),
+  downloadExport: id => rawBlob(`/exports/${id}/download`),
   notifications: unread_only => query('/notifications',{unread_only}),
   markNotificationRead: id => json('POST',`/notifications/${id}/read`),
 };
