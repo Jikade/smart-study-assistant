@@ -36,6 +36,7 @@ export function saveUi(patch) {
 
 export function logoutLocal() {
   saveAuth(null);
+  saveUi({ selectedSubjectId: null });
   state.cache.clear();
 }
 

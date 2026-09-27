@@ -128,7 +128,10 @@ export async function studyPlansView(){ const plans=await api.listStudyPlans(); 
 
 export async function analyticsView(){
   const subjects=await getSubjects();
-  const sid=selectedSubject()||subjects[0]?.id;
+  const savedSid=selectedSubject();
+  const sid=subjects.some(s=>Number(s.id)===Number(savedSid))
+    ? Number(savedSid)
+    : subjects[0]?.id;
 
   if(!sid) return `${pageHeader(
     'Analytics',
