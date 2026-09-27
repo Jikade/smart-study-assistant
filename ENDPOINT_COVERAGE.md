@@ -10,7 +10,7 @@ Frontend API layer: `src/api.js`
 | Subjects | 5 | Subjects + analytics subject selector |
 | Documents | 7 | Library + upload/process/embed/chunk detail/delete |
 | Chat | 4 | Conversation list + RAG chat |
-| Quizzes | 11 | Quiz library/generation/player/result |
+| Quizzes | 13 | Quiz library/generation/player/result |
 | Flashcards | 6 | Deck library/due review |
 | Study plans | 4 | Plan list/detail/task update |
 | Analytics | 4 | Analytics dashboard |
@@ -18,4 +18,4 @@ Frontend API layer: `src/api.js`
 | Community | 5 | Community feed/actions |
 | Exports | 2 | Export jobs |
 | Notifications | 2 | Notification center |
-| **Total** | **59** | `#/developer` runtime map |
+| **Total** | **61** | `#/developer` runtime map |

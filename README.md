@@ -99,9 +99,9 @@ Nếu backend chỉ có `localhost:5173` nhưng bạn mở frontend bằng `127.
 4. Refresh token rotation trả token pair mới và được lưu lại.
 5. Nếu refresh thất bại, local auth bị xóa và UI quay về landing/login.
 
-## 59 endpoint được map
+## 61 endpoint được map
 
-`src/api.js` chứa `ENDPOINT_CATALOG` đúng 59 endpoint `/api/v1`, chia theo:
+`src/api.js` chứa `ENDPOINT_CATALOG` đúng 61 endpoint `/api/v1`, chia theo:
 
 - Health: 1
 - Auth: 6
@@ -109,7 +109,7 @@ Nếu backend chỉ có `localhost:5173` nhưng bạn mở frontend bằng `127.
 - Subjects: 5
 - Documents: 7
 - Chat: 4
-- Quizzes: 11
+- Quizzes: 13
 - Flashcards: 6
 - Study plans: 4
 - Analytics: 4
@@ -127,7 +127,7 @@ Trong app, mở `Developer` từ sidebar card để xem toàn bộ map method/pa
 - Subjects
 - Documents + upload/process/embed/chunks/delete
 - RAG Chat + citations
-- Quizzes + AI modes + manual JSON authoring + attempt + submit
+- Quizzes + V5 deterministic + V5 preview API + AI legacy modes + manual JSON authoring + attempt + submit
 - Flashcard decks + due review + rating 0–3 + response time
 - Study plans + task status
 - Analytics: topic mastery, weak topics, recommendations, spaced study plan

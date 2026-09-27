@@ -38,7 +38,7 @@ export function shell(content, route='/', {publicPage=false}={}){
       </div>
       <div class="sidebar-scroll">
         <nav>${nav.map(([path,ic,label])=>`<a href="#/${path==='/'?'':path}" title="${esc(label)}" class="nav-link ${(route==='/'?path==='/':route.startsWith('/'+path))?'active':''}">${icon(ic)}<span class="nav-label">${label}</span></a>`).join('')}</nav>
-        <div class="sidebar-card"><span class="eyebrow sidebar-card-copy">API runtime</span><strong><span class="endpoint-count">59</span><span class="endpoint-label"> endpoints</span></strong><small class="sidebar-card-copy">FastAPI · PostgreSQL · RAG</small><a class="sidebar-card-link" href="#/developer"><span class="sidebar-card-copy">Xem endpoint map</span>${icon('arrow')}</a></div>
+        <div class="sidebar-card"><span class="eyebrow sidebar-card-copy">API runtime</span><strong><span class="endpoint-count">61</span><span class="endpoint-label"> endpoints</span></strong><small class="sidebar-card-copy">FastAPI · PostgreSQL · RAG</small><a class="sidebar-card-link" href="#/developer"><span class="sidebar-card-copy">Xem endpoint map</span>${icon('arrow')}</a></div>
         <div class="sidebar-user">${avatarMarkup(user,'avatar')}<div class="user-copy"><strong>${esc(user?.full_name||'Sinh viên')}</strong><small>${esc(user?.email||'')}</small></div><button class="icon-btn" data-logout title="Đăng xuất" aria-label="Đăng xuất">${icon('arrow')}</button></div>
       </div>
     </aside>
@@ -189,7 +189,7 @@ export async function notificationsView(){ const rows=await api.notifications(fa
 
 export async function profileView(){ const user=await api.me(); return `${pageHeader('Hồ sơ','Cài đặt danh tính học tập.','Các trường này map trực tiếp PATCH /users/me.')}${surface(`<form class="profile-form" id="profile-form">${avatarMarkup(user,'profile-avatar-large')}<div class="profile-fields"><label>Họ tên<input class="input" name="full_name" value="${esc(user.full_name)}" minlength="2"></label><label>Email<input class="input" value="${esc(user.email)}" disabled></label><label>Avatar URL<input class="input" name="avatar_url" value="${esc(user.avatar_url||'')}" placeholder="https://..."></label><div class="two-col"><label>Timezone<input class="input" name="timezone" value="${esc(user.timezone||'UTC')}"></label><label>Locale<input class="input" name="locale" value="${esc(user.locale||'vi-VN')}"></label></div>${button('Lưu thay đổi',{attrs:'type="submit"'})}</div></form>`,'reveal')}`; }
 
-export function developerView(){ const groups=Object.groupBy?Object.groupBy(ENDPOINT_CATALOG,x=>x[3]):ENDPOINT_CATALOG.reduce((a,x)=>((a[x[3]]??=[]).push(x),a),{}); return `${pageHeader('Developer','Endpoint coverage map.','59 endpoint /api/v1 được API client frontend khai báo và có thể theo dõi từ đây.')}<div class="endpoint-summary reveal"><strong>${ENDPOINT_CATALOG.length}</strong><span>endpoint mapped</span><code>${esc(api.baseUrl)}</code></div>${Object.entries(groups).map(([g,items])=>surface(`<div class="surface-head"><div><span class="eyebrow">Module</span><h3>${esc(g)}</h3></div><span>${items.length} routes</span></div><div class="endpoint-list">${items.map(([m,p,a])=>`<div><span class="method method-${m.toLowerCase()}">${m}</span><code>${esc(p)}</code>${a?badge('JWT','neutral'):badge('Public','success')}</div>`).join('')}</div>`,'reveal endpoint-group')).join('')}`; }
+export function developerView(){ const groups=Object.groupBy?Object.groupBy(ENDPOINT_CATALOG,x=>x[3]):ENDPOINT_CATALOG.reduce((a,x)=>((a[x[3]]??=[]).push(x),a),{}); return `${pageHeader('Developer','Endpoint coverage map.','61 endpoint /api/v1 được API client frontend khai báo và có thể theo dõi từ đây.')}<div class="endpoint-summary reveal"><strong>${ENDPOINT_CATALOG.length}</strong><span>endpoint mapped</span><code>${esc(api.baseUrl)}</code></div>${Object.entries(groups).map(([g,items])=>surface(`<div class="surface-head"><div><span class="eyebrow">Module</span><h3>${esc(g)}</h3></div><span>${items.length} routes</span></div><div class="endpoint-list">${items.map(([m,p,a])=>`<div><span class="method method-${m.toLowerCase()}">${m}</span><code>${esc(p)}</code>${a?badge('JWT','neutral'):badge('Public','success')}</div>`).join('')}</div>`,'reveal endpoint-group')).join('')}`; }
 
 // Detail renderers
 export async function openDocument(id){ const [doc,chunks]=await Promise.all([api.getDocument(id),api.documentChunks(id).catch(()=>[])]); modal({title:doc.original_name,wide:true,body:`<div class="detail-meta">${badge(doc.status,statusTone(doc.status))}<span>${fmtBytes(doc.file_size_bytes)}</span><span>${doc.page_count??'—'} trang</span><span>${esc(doc.mime_type||'')}</span></div>${doc.processing_error?`<div class="error-box">${esc(doc.processing_error)}</div>`:''}<h3>Active chunks (${chunks.length})</h3><div class="chunk-list">${chunks.map(c=>`<article><div><b>#${c.chunk_index}</b><span>${c.char_count??c.content.length} chars</span>${c.page_start?`<span>p.${c.page_start}${c.page_end&&c.page_end!==c.page_start?`–${c.page_end}`:''}</span>`:''}</div><p>${esc(c.content)}</p></article>`).join('')||'<p class="muted">Chưa có chunk. Hãy process tài liệu.</p>'}</div>`,actions:`${button('Process',{variant:'soft',attrs:`data-process-doc="${id}"`})}${button('Embed',{attrs:`data-embed-doc="${id}"`})}` ,wide:true}); }
@@ -210,8 +210,95 @@ export async function openPlan(id){ const p=await api.getStudyPlan(id); modal({t
 export async function createSubjectModal(subject=null){ modal({title:subject?'Chỉnh sửa môn học':'Tạo môn học',body:`<form id="subject-form" data-id="${subject?.id||''}" class="stack-form"><label>Tên<input class="input" name="name" required value="${esc(subject?.name||'')}"></label><label>Mô tả<textarea class="input" name="description" rows="3">${esc(subject?.description||'')}</textarea></label><label>Màu<input class="input color-input" name="color_hex" type="color" value="${esc(subject?.color_hex||'#b8ff5a')}"></label><button class="btn btn-primary" type="submit">Lưu môn học</button></form>`}); }
 export async function uploadModal(){ modal({title:'Upload tài liệu',body:`<form id="upload-form" class="stack-form"><label>File<input class="input" name="file" type="file" accept=".pdf,.docx,.txt" required></label><label>Môn học${await subjectSelect()}</label><label class="switch-row"><input type="checkbox" name="process_now" checked><span>Process ngay sau upload</span></label><button class="btn btn-primary" type="submit">Upload</button><div class="upload-progress" data-upload-progress><i></i></div></form>`}); }
 export async function conversationModal(){ const docs=await api.listDocuments({limit:100,offset:0}); modal({title:'Cuộc trò chuyện mới',body:`<form id="conversation-form" class="stack-form"><label>Tiêu đề<input class="input" name="title" placeholder="Ôn tập chương 1"></label><label>Môn học${await subjectSelect()}</label><label>Tài liệu liên quan<select class="input" name="document_ids" multiple size="6">${docs.items.map(d=>`<option value="${d.id}">${esc(d.original_name)}</option>`).join('')}</select><small>Giữ Ctrl/Cmd để chọn nhiều file.</small></label><button class="btn btn-primary" type="submit">Tạo cuộc trò chuyện</button></form>`}); }
-export async function generateQuizModal(){ modal({title:'Tạo AI quiz',body:`<form id="generate-quiz-form" class="stack-form"><label>Kiểu tạo<select class="input" name="mode"><option value="normal">Normal</option><option value="weak">Weak topic</option><option value="adaptive">Adaptive</option><option value="due">Due</option></select></label><label>Tiêu đề<input class="input" name="title" required value="Quiz ôn tập"></label><label>Môn học${await subjectSelect()}</label><div class="two-col"><label>Số câu<input class="input" type="number" name="question_count" min="1" max="50" value="10"></label><label>Độ khó<select class="input" name="difficulty"><option>MEDIUM</option><option>EASY</option><option>HARD</option><option>MIXED</option></select></label></div><label>Thời lượng (phút)<input class="input" type="number" name="duration_minutes" min="1" value="15"></label><button class="btn btn-primary" type="submit">Tạo quiz</button></form>`}); }
-export async function generateDeckModal(){ modal({title:'Tạo flashcard bằng AI',body:`<form id="generate-deck-form" class="stack-form"><label>Tiêu đề<input class="input" name="title" required value="Flashcards ôn tập"></label><label>Môn học${await subjectSelect()}</label><label>Số thẻ<input class="input" type="number" name="card_count" min="1" max="100" value="20"></label><button class="btn btn-primary" type="submit">Tạo deck</button></form>`}); }
+async function readyDocumentMultiSelect(name='document_ids'){
+  const result=await api.listDocuments({limit:100,offset:0});
+  const documents=(result?.items||[]).filter(doc=>String(doc.status||'').toUpperCase()==='READY');
+
+  if(!documents.length){
+    return `<div class="error-box">Chưa có tài liệu READY. Hãy xử lý tài liệu trước khi tạo học liệu AI.</div>`;
+  }
+
+  return `<select class="input" name="${esc(name)}" multiple size="${Math.min(7,Math.max(3,documents.length))}">${documents.map(doc=>`<option value="${doc.id}">${esc(doc.original_name||doc.title||`Tài liệu #${doc.id}`)} · môn #${doc.subject_id??'—'}</option>`).join('')}</select><small class="muted">Giữ Ctrl/Cmd để chọn nhiều tài liệu.</small>`;
+}
+
+export async function generateQuizModal(){
+  const [subjectHtml,documentHtml]=await Promise.all([
+    subjectSelect('subject_id',selectedSubject(),false),
+    readyDocumentMultiSelect('document_ids'),
+  ]);
+
+  modal({
+    title:'Tạo quiz',
+    body:`<form id="generate-quiz-form" class="stack-form">
+      <label>Kiểu tạo
+        <select class="input" name="mode">
+          <option value="v5">V5 Deterministic (khuyến nghị)</option>
+          <option value="normal">AI V4 / Normal</option>
+          <option value="weak">Weak topic</option>
+          <option value="adaptive">Adaptive</option>
+          <option value="due">Due</option>
+        </select>
+      </label>
+      <label>Tiêu đề<input class="input" name="title" required value="Quiz ôn tập"></label>
+      <label>Môn học${subjectHtml}</label>
+      <label>Tài liệu nguồn${documentHtml}</label>
+      <div class="two-col">
+        <label>Số câu<input class="input" type="number" name="question_count" min="1" max="5" value="5"></label>
+        <label>Độ khó
+          <select class="input" name="difficulty">
+            <option>MEDIUM</option>
+            <option>EASY</option>
+            <option>HARD</option>
+          </select>
+        </label>
+      </div>
+      <div class="two-col">
+        <label>Nhóm môn
+          <select class="input" name="subject_family">
+            <option value="general">General</option>
+            <option value="history">History</option>
+            <option value="economics">Economics</option>
+            <option value="biology">Biology</option>
+            <option value="physics">Physics</option>
+            <option value="geography">Geography</option>
+          </select>
+        </label>
+        <label>Tối đa / section<input class="input" type="number" name="max_per_section" min="1" max="50" value="2"></label>
+      </div>
+      <div class="two-col">
+        <label>Thời lượng (phút)<input class="input" type="number" name="duration_minutes" min="1" value="15"></label>
+        <label>Quyền xem
+          <select class="input" name="visibility">
+            <option value="PRIVATE">PRIVATE</option>
+            <option value="UNLISTED">UNLISTED</option>
+            <option value="PUBLIC">PUBLIC</option>
+          </select>
+        </label>
+      </div>
+      <p class="muted">V5 yêu cầu ít nhất một tài liệu READY và hỗ trợ 1–5 câu. Các mode V4 vẫn được giữ để tương thích.</p>
+      <button class="btn btn-primary" type="submit">Tạo quiz</button>
+    </form>`
+  });
+}
+
+export async function generateDeckModal(){
+  const [subjectHtml,documentHtml]=await Promise.all([
+    subjectSelect(),
+    readyDocumentMultiSelect('document_ids'),
+  ]);
+
+  modal({
+    title:'Tạo flashcard bằng AI',
+    body:`<form id="generate-deck-form" class="stack-form">
+      <label>Tiêu đề<input class="input" name="title" required value="Flashcards ôn tập"></label>
+      <label>Môn học${subjectHtml}</label>
+      <label>Tài liệu nguồn (tuỳ chọn)${documentHtml}</label>
+      <label>Số thẻ<input class="input" type="number" name="card_count" min="1" max="100" value="20"></label>
+      <button class="btn btn-primary" type="submit">Tạo deck</button>
+    </form>`
+  });
+}
+
 export async function generatePlanModal(){ const today=new Date().toISOString().slice(0,10); const exam=new Date(Date.now()+14*864e5).toISOString().slice(0,10); modal({title:'Tạo kế hoạch học',body:`<form id="generate-plan-form" class="stack-form"><label>Tiêu đề<input class="input" name="title" required value="Kế hoạch ôn thi"></label><label>Môn học${await subjectSelect()}</label><div class="two-col"><label>Ngày bắt đầu<input class="input" type="date" name="start_date" value="${today}" required></label><label>Ngày thi<input class="input" type="date" name="exam_date" value="${exam}" required></label></div><label>Phút/ngày<input class="input" type="number" name="daily_minutes" min="1" max="720" value="60"></label><button class="btn btn-primary" type="submit">Tạo kế hoạch</button></form>`}); }
 export async function publishCommunityModal(){ const [quizzes,decks]=await Promise.all([api.listQuizzes({limit:100}),api.listDecks(100)]); modal({title:'Chia sẻ tài nguyên',body:`<form id="community-form" class="stack-form"><label>Loại<select class="input" name="resource_type" data-resource-type><option value="QUIZ">Quiz</option><option value="FLASHCARD_DECK">Flashcard deck</option></select></label><label>Quiz<select class="input" name="quiz_id" data-quiz-select>${quizzes.map(q=>`<option value="${q.id}">${esc(q.title)}</option>`).join('')}</select></label><label class="hidden" data-deck-label>Deck<select class="input" name="flashcard_deck_id">${decks.map(d=>`<option value="${d.id}">${esc(d.title)}</option>`).join('')}</select></label><label>Tiêu đề bài chia sẻ<input class="input" name="title"></label><label>Mô tả<textarea class="input" name="description" rows="3"></textarea></label><button class="btn btn-primary" type="submit">Publish</button></form>`}); }
 export async function exportModal(){ modal({title:'Tạo export',body:`<form id="export-form" class="stack-form"><label>Loại tài nguyên<select class="input" name="resource_type"><option>QUIZ</option><option>FLASHCARD_DECK</option><option>STUDY_PLAN</option></select></label><label>Resource ID<input class="input" type="number" name="resource_id" min="1" required></label><label>Định dạng<select class="input" name="file_format"><option>DOCX</option><option>PDF</option></select></label><button class="btn btn-primary" type="submit">Xuất file</button></form>`}); }

@@ -147,11 +147,122 @@ async function submitChat(e){e.preventDefault();const btn=e.submitter;const form
 
 function openManualQuizModal(){modal({title:'Tạo quiz thủ công',body:`<form id="manual-quiz-form" class="stack-form"><label>Tiêu đề<input class="input" name="title" required value="Quiz thủ công"></label><label>Subject ID (tuỳ chọn)<input class="input" type="number" name="subject_id" min="1"></label><div class="two-col"><label>Độ khó<select class="input" name="difficulty"><option>MEDIUM</option><option>EASY</option><option>HARD</option><option>MIXED</option></select></label><label>Visibility<select class="input" name="visibility"><option>PRIVATE</option><option>UNLISTED</option><option>PUBLIC</option></select></label></div><label>Questions JSON<textarea class="input code-input" name="questions" rows="13">[\n  {\n    "question_text": "Ví dụ: Khái niệm nào đúng?",\n    "difficulty": "MEDIUM",\n    "points": 1,\n    "options": [\n      {"option_key":"A","option_text":"Đáp án A","is_correct":true,"position":1},\n      {"option_key":"B","option_text":"Đáp án B","is_correct":false,"position":2},\n      {"option_key":"C","option_text":"Đáp án C","is_correct":false,"position":3},\n      {"option_key":"D","option_text":"Đáp án D","is_correct":false,"position":4}\n    ]\n  }\n]</textarea></label><button class="btn btn-primary" type="submit">Tạo quiz</button></form>`});bindModalEvents();}
 async function submitManualQuiz(e){e.preventDefault();const btn=e.submitter;setBusy(btn,true);const fd=new FormData(e.currentTarget);try{const payload={title:fd.get('title'),difficulty:fd.get('difficulty'),visibility:fd.get('visibility'),subject_id:fd.get('subject_id')?Number(fd.get('subject_id')):null,document_ids:[],questions:JSON.parse(fd.get('questions'))};await api.createQuiz(payload);closeModal();toast('Đã tạo quiz thủ công','success');render();}catch(err){toast(err.message,'danger');setBusy(btn,false)}}
-async function submitGenerateQuiz(e){e.preventDefault();const btn=e.submitter;setBusy(btn,true,'AI đang tạo quiz…');const fd=new FormData(e.currentTarget);const payload={title:fd.get('title'),subject_id:fd.get('subject_id')?Number(fd.get('subject_id')):null,document_ids:[],question_count:Number(fd.get('question_count')),difficulty:fd.get('difficulty'),duration_minutes:fd.get('duration_minutes')?Number(fd.get('duration_minutes')):null};try{const mode=fd.get('mode');const fn=mode==='weak'?api.generateWeakQuiz:mode==='adaptive'?api.generateAdaptiveQuiz:mode==='due'?api.generateDueQuiz:api.generateQuiz;await fn(payload);closeModal();toast('AI quiz đã được tạo','success');render();}catch(err){console.error('[SSA quiz generation failed]',{status:err?.status,message:err?.message,data:err?.data,payload});const status=err?.status||'—';const detail=esc(err?.message||'Không có chi tiết lỗi từ backend');const hint=Number(err?.status)===502?'HTTP 502 ở endpoint này thường là backend đã nhận request nhưng pipeline AI/quality-gate không tạo được quiz hợp lệ. Hãy xem trường “Chi tiết backend” và terminal FastAPI để biết stage thất bại.':'Kiểm tra payload và terminal backend để xác định nguyên nhân.';modal({title:'Không tạo được AI quiz',body:`<div class="quiz-error-panel"><div class="quiz-error-status"><span>HTTP</span><strong>${esc(status)}</strong></div><div><span class="eyebrow">Chi tiết backend</span><p class="quiz-error-detail">${detail}</p><p class="muted">${esc(hint)}</p></div></div>`,actions:`<button class="btn btn-primary" data-modal-close>Đóng</button>`});toast(`Tạo quiz thất bại (HTTP ${status})`,'danger');setBusy(btn,false)}}
+async function submitGenerateQuiz(e){
+  e.preventDefault();
+  const btn=e.submitter;
+  const form=e.currentTarget;
+  setBusy(btn,true,'Đang tạo quiz…');
+
+  const fd=new FormData(form);
+  const mode=String(fd.get('mode')||'v5');
+  const subjectId=fd.get('subject_id')?Number(fd.get('subject_id')):null;
+  const documentIds=[...form.querySelectorAll('select[name="document_ids"] option:checked')]
+    .map(option=>Number(option.value))
+    .filter(Number.isFinite);
+  const questionCount=Number(fd.get('question_count')||5);
+  const difficulty=String(fd.get('difficulty')||'MEDIUM');
+  const durationMinutes=fd.get('duration_minutes')?Number(fd.get('duration_minutes')):null;
+
+  try{
+    if(mode==='v5'){
+      if(!subjectId) throw new Error('Quiz V5 cần chọn môn học.');
+      if(!documentIds.length) throw new Error('Quiz V5 cần chọn ít nhất một tài liệu READY.');
+
+      const payload={
+        title:fd.get('title'),
+        subject_id:subjectId,
+        document_ids:documentIds,
+        question_count:Math.max(1,Math.min(5,questionCount)),
+        difficulty,
+        duration_minutes:durationMinutes,
+        visibility:String(fd.get('visibility')||'PRIVATE'),
+        subject_family:String(fd.get('subject_family')||'general'),
+        max_per_section:Number(fd.get('max_per_section')||2),
+      };
+
+      await api.generateQuizV5(payload);
+      closeModal();
+      toast('Quiz V5 deterministic đã được tạo','success');
+      render();
+      return;
+    }
+
+    const payload={
+      title:fd.get('title'),
+      subject_id:subjectId,
+      document_ids:documentIds,
+      question_count:questionCount,
+      difficulty,
+      duration_minutes:durationMinutes,
+    };
+
+    const fn=mode==='weak'
+      ? api.generateWeakQuiz
+      : mode==='adaptive'
+        ? api.generateAdaptiveQuiz
+        : mode==='due'
+          ? api.generateDueQuiz
+          : api.generateQuiz;
+
+    await fn(payload);
+    closeModal();
+    toast('AI quiz đã được tạo','success');
+    render();
+  }catch(err){
+    console.error('[SSA quiz generation failed]',{
+      status:err?.status,
+      message:err?.message,
+      data:err?.data,
+      mode,
+      subjectId,
+      documentIds,
+    });
+
+    const status=err?.status||'—';
+    const detail=esc(err?.message||'Không có chi tiết lỗi từ backend');
+    const hint=Number(err?.status)===422
+      ? 'Quiz V5 chỉ lưu khi tạo đủ số câu hợp lệ từ tài liệu đã chọn. Hãy chọn tài liệu READY khác hoặc giảm số câu.'
+      : Number(err?.status)===502
+        ? 'Backend đã nhận request nhưng pipeline AI/quality-gate không tạo được dữ liệu hợp lệ.'
+        : 'Kiểm tra môn học, tài liệu nguồn và terminal backend để xác định nguyên nhân.';
+
+    modal({
+      title:'Không tạo được quiz',
+      body:`<div class="quiz-error-panel"><div class="quiz-error-status"><span>HTTP</span><strong>${esc(status)}</strong></div><div><span class="eyebrow">Chi tiết backend</span><p class="quiz-error-detail">${detail}</p><p class="muted">${esc(hint)}</p></div></div>`,
+      actions:`<button class="btn btn-primary" data-modal-close>Đóng</button>`
+    });
+    toast(`Tạo quiz thất bại (HTTP ${status})`,'danger');
+    setBusy(btn,false);
+  }
+}
 async function publishQuiz(e){const btn=e.currentTarget;setBusy(btn,true);try{await api.publishQuiz(Number(btn.dataset.publishQuiz));toast('Quiz đã publish','success');closeModal();render();}catch(err){toast(err.message,'danger');setBusy(btn,false)}}
 async function submitAttempt(e){e.preventDefault();const btn=e.submitter;setBusy(btn,true,'Đang chấm…');const form=e.currentTarget;const answers=[...form.querySelectorAll('fieldset')].map(fs=>{const q=fs.querySelector('input[type=radio]');const checked=fs.querySelector('input[type=radio]:checked');return{question_id:Number(q.name.replace('q_','')),selected_option_id:checked?Number(checked.value):null}});try{const r=await api.submitAttempt(Number(form.dataset.attemptId),answers);modal({title:'Kết quả quiz',body:`<div class="result-score"><strong>${Number(r.percentage??0).toFixed(1)}%</strong><span>${r.correct_count} đúng · ${r.wrong_count} sai · ${r.unanswered_count} bỏ trống</span></div><div class="score-bar"><i style="width:${Math.max(0,Math.min(100,Number(r.percentage||0)))}%"></i></div>`,actions:`<button class="btn btn-primary" data-modal-close>Kết thúc</button>`});}catch(err){toast(err.message,'danger');setBusy(btn,false)}}
 
-async function submitGenerateDeck(e){e.preventDefault();const btn=e.submitter;setBusy(btn,true,'AI đang tạo thẻ…');const fd=new FormData(e.currentTarget);try{await api.generateDeck({title:fd.get('title'),subject_id:fd.get('subject_id')?Number(fd.get('subject_id')):null,document_ids:[],card_count:Number(fd.get('card_count'))});closeModal();toast('Đã tạo flashcard deck','success');render();}catch(err){toast(err.message,'danger');setBusy(btn,false)}}
+async function submitGenerateDeck(e){
+  e.preventDefault();
+  const btn=e.submitter;
+  const form=e.currentTarget;
+  setBusy(btn,true,'AI đang tạo thẻ…');
+  const fd=new FormData(form);
+  const documentIds=[...form.querySelectorAll('select[name="document_ids"] option:checked')]
+    .map(option=>Number(option.value))
+    .filter(Number.isFinite);
+
+  try{
+    await api.generateDeck({
+      title:fd.get('title'),
+      subject_id:fd.get('subject_id')?Number(fd.get('subject_id')):null,
+      document_ids:documentIds,
+      card_count:Number(fd.get('card_count')),
+    });
+    closeModal();
+    toast('Đã tạo flashcard deck','success');
+    render();
+  }catch(err){
+    toast(err.message,'danger');
+    setBusy(btn,false);
+  }
+}
 async function submitGeneratePlan(e){e.preventDefault();const btn=e.submitter;setBusy(btn,true);const fd=new FormData(e.currentTarget);try{await api.generateStudyPlan({title:fd.get('title'),subject_id:fd.get('subject_id')?Number(fd.get('subject_id')):null,start_date:fd.get('start_date'),exam_date:fd.get('exam_date'),daily_minutes:Number(fd.get('daily_minutes'))});closeModal();toast('Đã tạo kế hoạch học','success');render();}catch(err){toast(err.message,'danger');setBusy(btn,false)}}
 async function updateTask(e){try{await api.updateStudyTask(Number(e.target.dataset.task),e.target.value);toast('Đã cập nhật task','success')}catch(err){toast(err.message,'danger')}}
 
