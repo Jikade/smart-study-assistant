@@ -237,7 +237,204 @@ async function submitGenerateQuiz(e){
   }
 }
 async function publishQuiz(e){const btn=e.currentTarget;setBusy(btn,true);try{await api.publishQuiz(Number(btn.dataset.publishQuiz));toast('Quiz đã publish','success');closeModal();render();}catch(err){toast(err.message,'danger');setBusy(btn,false)}}
-async function submitAttempt(e){e.preventDefault();const btn=e.submitter;setBusy(btn,true,'Đang chấm…');const form=e.currentTarget;const answers=[...form.querySelectorAll('fieldset')].map(fs=>{const q=fs.querySelector('input[type=radio]');const checked=fs.querySelector('input[type=radio]:checked');return{question_id:Number(q.name.replace('q_','')),selected_option_id:checked?Number(checked.value):null}});try{const r=await api.submitAttempt(Number(form.dataset.attemptId),answers);modal({title:'Kết quả quiz',body:`<div class="result-score"><strong>${Number(r.percentage??0).toFixed(1)}%</strong><span>${r.correct_count} đúng · ${r.wrong_count} sai · ${r.unanswered_count} bỏ trống</span></div><div class="score-bar"><i style="width:${Math.max(0,Math.min(100,Number(r.percentage||0)))}%"></i></div>`,actions:`<button class="btn btn-primary" data-modal-close>Kết thúc</button>`});}catch(err){toast(err.message,'danger');setBusy(btn,false)}}
+function quizResultQuestionHtml(item){
+  const status=String(
+    item.status||'UNANSWERED'
+  ).toUpperCase();
+
+  const statusMeta=
+    status==='CORRECT'
+      ? {
+          label:'Chính xác',
+          short:'Đúng',
+          icon:'✨',
+          badgeClass:'result-status status-correct',
+          cardClass:'result-question result-correct',
+          selectedClass:'answer-correct',
+        }
+      : status==='WRONG'
+        ? {
+            label:'Cần xem lại',
+            short:'Sai',
+            icon:'💡',
+            badgeClass:'result-status status-wrong',
+            cardClass:'result-question result-wrong',
+            selectedClass:'answer-selected-wrong',
+          }
+        : {
+            label:'Chưa trả lời',
+            short:'Bỏ trống',
+            icon:'🕘',
+            badgeClass:'result-status status-unanswered',
+            cardClass:'result-question result-unanswered',
+            selectedClass:'answer-unanswered',
+          };
+
+  const selected=item.selected_option;
+  const correct=item.correct_option;
+
+  const sameAnswer=Boolean(
+    selected &&
+    correct &&
+    Number(selected.id)===Number(correct.id)
+  );
+
+  const selectedHtml=selected
+    ? `<div class="result-answer ${statusMeta.selectedClass}">
+        <span class="answer-label">Bạn chọn</span>
+        <strong>${esc(selected.option_key)}. ${esc(selected.option_text)}</strong>
+      </div>`
+    : `<div class="result-answer answer-unanswered">
+        <span class="answer-label">Bạn chọn</span>
+        <strong>Chưa chọn đáp án</strong>
+      </div>`;
+
+  const correctHtml=sameAnswer
+    ? ''
+    : `<div class="result-answer answer-correct">
+        <span class="answer-label">Đáp án đúng</span>
+        <strong>${correct?`${esc(correct.option_key)}. ${esc(correct.option_text)}`:'Không xác định'}</strong>
+      </div>`;
+
+  const explanation=item.explanation
+    ? `<div class="result-explanation">
+        <div class="explanation-head">
+          <span class="explanation-icon">📘</span>
+          <b>Giải thích</b>
+        </div>
+        <p>${esc(item.explanation)}</p>
+      </div>`
+    : '';
+
+  return `<article class="${statusMeta.cardClass}">
+    <div class="result-question-head">
+      <div class="result-question-title-wrap">
+        <span class="result-question-number">Câu ${Number(item.question_order||0)}</span>
+        <h4>${esc(item.question_text||'')}</h4>
+      </div>
+      <span class="${statusMeta.badgeClass}">
+        <span class="status-icon" aria-hidden="true">${statusMeta.icon}</span>
+        <span>${statusMeta.short}</span>
+      </span>
+    </div>
+
+    <div class="result-answer-grid">
+      ${selectedHtml}
+      ${correctHtml}
+    </div>
+
+    ${explanation}
+
+    <div class="result-question-foot">
+      <small class="result-points">${Number(item.points_awarded||0).toFixed(1)} / ${Number(item.points_possible||0).toFixed(1)} điểm</small>
+      <span class="result-tip">${statusMeta.label}</span>
+    </div>
+  </article>`;
+}
+
+function showQuizResult(result){
+  const percentage=Math.max(
+    0,
+    Math.min(
+      100,
+      Number(result.percentage||0)
+    )
+  );
+
+  const correctCount=Number(result.correct_count||0);
+  const wrongCount=Number(result.wrong_count||0);
+  const unansweredCount=Number(result.unanswered_count||0);
+
+  const detail=(result.answers||[])
+    .map(quizResultQuestionHtml)
+    .join('');
+
+  const celebrationIcon=
+    percentage >= 80
+      ? '🏆'
+      : percentage >= 50
+        ? '🎯'
+        : '🌱';
+
+  const encouragement=
+    percentage >= 80
+      ? 'Bạn làm rất tốt! Hãy tiếp tục giữ phong độ này.'
+      : percentage >= 50
+        ? 'Kết quả khá ổn. Xem lại các câu sai để tiến bộ nhanh hơn.'
+        : 'Đừng lo, xem lại từng câu và thử lại là bạn sẽ tiến bộ rất nhanh.';
+
+  modal({
+    title:'Kết quả quiz',
+    wide:true,
+    body:`<div class="result-hero">
+      <div class="result-hero-main">
+        <div class="result-hero-icon" aria-hidden="true">${celebrationIcon}</div>
+        <div class="result-hero-copy">
+          <strong>${percentage.toFixed(1)}%</strong>
+          <span>${Number(result.score||0).toFixed(1)} / ${Number(result.max_score||0).toFixed(1)} điểm</span>
+          <p>${encouragement}</p>
+        </div>
+      </div>
+
+      <div class="score-bar score-bar-large">
+        <i style="width:${percentage}%"></i>
+      </div>
+
+      <div class="result-kpis">
+        <div class="result-kpi kpi-correct">
+          <span class="kpi-icon">✅</span>
+          <div><b>${correctCount}</b><small>Câu đúng</small></div>
+        </div>
+        <div class="result-kpi kpi-wrong">
+          <span class="kpi-icon">❌</span>
+          <div><b>${wrongCount}</b><small>Câu sai</small></div>
+        </div>
+        <div class="result-kpi kpi-unanswered">
+          <span class="kpi-icon">📝</span>
+          <div><b>${unansweredCount}</b><small>Bỏ trống</small></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="result-review">
+      <div class="result-review-title">
+        <div>
+          <h3>Xem lại từng câu</h3>
+          <p>Biết ngay câu nào đúng, câu nào sai và đáp án đúng để ôn lại nhanh hơn.</p>
+        </div>
+        <span>${(result.answers||[]).length} câu</span>
+      </div>
+      ${detail||'<p class="muted">Chưa có dữ liệu chi tiết cho lần làm bài này.</p>'}
+    </div>`,
+    actions:'<button class="btn btn-primary" data-modal-close>Hoàn tất</button>'
+  });
+}
+
+async function submitAttempt(e){
+  e.preventDefault();
+  const btn=e.submitter;
+  const form=e.currentTarget;
+  const attemptId=Number(form.dataset.attemptId);
+  setBusy(btn,true,'Đang chấm…');
+
+  const answers=[...form.querySelectorAll('fieldset')].map(fs=>{
+    const q=fs.querySelector('input[type=radio]');
+    const checked=fs.querySelector('input[type=radio]:checked');
+    return {
+      question_id:Number(q.name.replace('q_','')),
+      selected_option_id:checked?Number(checked.value):null
+    };
+  });
+
+  try{
+    await api.submitAttempt(attemptId,answers);
+    const result=await api.attemptResult(attemptId);
+    showQuizResult(result);
+  }catch(err){
+    toast(err.message,'danger');
+    setBusy(btn,false);
+  }
+}
 
 async function submitGenerateDeck(e){
   e.preventDefault();
