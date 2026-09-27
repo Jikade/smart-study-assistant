@@ -273,48 +273,48 @@ def create_quiz(
         generation_prompt=generation_prompt,
     )
 
-    db.add(quiz)
-    db.flush()
-
-    for document_id in document_ids:
-        db.add(
-            QuizDocument(
-                quiz_id=quiz.id,
-                document_id=document_id,
-            )
-        )
-
-    for order, q in enumerate(
-        payload.questions,
-        start=1,
-    ):
-        question = Question(
-            quiz_id=quiz.id,
-            source_chunk_id=q.source_chunk_id,
-            question_order=order,
-            question_text=q.question_text,
-            difficulty=q.difficulty,
-            explanation=q.explanation,
-            points=q.points,
-            metadata_={},
-        )
-
-        db.add(question)
+    try:
+        db.add(quiz)
         db.flush()
 
-        for option in q.options:
+        for document_id in document_ids:
             db.add(
-                QuestionOption(
-                    question_id=question.id,
-                    option_key=option.option_key,
-                    option_text=option.option_text,
-                    is_correct=option.is_correct,
-                    explanation=option.explanation,
-                    position=option.position,
+                QuizDocument(
+                    quiz_id=quiz.id,
+                    document_id=document_id,
                 )
             )
 
-    try:
+        for order, q in enumerate(
+            payload.questions,
+            start=1,
+        ):
+            question = Question(
+                quiz_id=quiz.id,
+                source_chunk_id=q.source_chunk_id,
+                question_order=order,
+                question_text=q.question_text,
+                difficulty=q.difficulty,
+                explanation=q.explanation,
+                points=q.points,
+                metadata_={},
+            )
+
+            db.add(question)
+            db.flush()
+
+            for option in q.options:
+                db.add(
+                    QuestionOption(
+                        question_id=question.id,
+                        option_key=option.option_key,
+                        option_text=option.option_text,
+                        is_correct=option.is_correct,
+                        explanation=option.explanation,
+                        position=option.position,
+                    )
+                )
+
         db.commit()
 
     except Exception:
@@ -324,7 +324,6 @@ def create_quiz(
     db.refresh(quiz)
 
     return quiz
-
 
 # =========================================================
 # JSON PARSING
