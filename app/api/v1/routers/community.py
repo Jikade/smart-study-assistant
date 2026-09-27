@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
-from sqlalchemy import delete, select, text
+from fastapi import APIRouter, Header, HTTPException
+from sqlalchemy import delete, func, select, text
 
 from app.api.deps import CurrentUser, DbSession
 from app.db.models import (
@@ -13,20 +13,93 @@ from app.db.models import (
     Question,
     QuestionOption,
     Quiz,
+    User,
 )
 from app.schemas.community import CommunityPostCreate, CommunityPostOut
+from app.core.security import decode_access_token
 
 router = APIRouter(prefix="/community", tags=["community"])
 
 
 @router.get("/posts")
-def public_posts(db: DbSession, limit: int = 50, offset: int = 0):
-    rows = db.execute(text("""
-        SELECT * FROM vw_public_community_resources
-        ORDER BY published_at DESC
-        LIMIT :limit OFFSET :offset
-    """), {"limit": limit, "offset": offset}).mappings().all()
-    return [dict(r) for r in rows]
+def public_posts(
+    db: DbSession,
+    limit: int = 50,
+    offset: int = 0,
+    authorization: str | None = Header(default=None),
+):
+    rows = db.execute(
+        text(
+            """
+            SELECT *
+            FROM vw_public_community_resources
+            ORDER BY published_at DESC
+            LIMIT :limit OFFSET :offset
+            """
+        ),
+        {"limit": limit, "offset": offset},
+    ).mappings().all()
+
+    posts = [dict(row) for row in rows]
+
+    for post in posts:
+        post["liked_by_me"] = False
+        post["saved_by_me"] = False
+
+    if not authorization:
+        return posts
+
+    try:
+        scheme, token = authorization.split(" ", 1)
+        if scheme.lower() != "bearer":
+            raise ValueError("invalid auth scheme")
+
+        payload = decode_access_token(token)
+        user_id = int(payload["sub"])
+
+        user = db.get(User, user_id)
+        if user is None or user.status != "ACTIVE":
+            raise ValueError("inactive user")
+
+    except Exception as exc:
+        raise HTTPException(
+            401,
+            "Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+    post_ids = [
+        int(post["post_id"])
+        for post in posts
+    ]
+
+    if not post_ids:
+        return posts
+
+    liked_ids = set(
+        db.scalars(
+            select(CommunityReaction.post_id).where(
+                CommunityReaction.user_id == user_id,
+                CommunityReaction.post_id.in_(post_ids),
+            )
+        ).all()
+    )
+
+    saved_ids = set(
+        db.scalars(
+            select(CommunitySave.post_id).where(
+                CommunitySave.user_id == user_id,
+                CommunitySave.post_id.in_(post_ids),
+            )
+        ).all()
+    )
+
+    for post in posts:
+        post_id = int(post["post_id"])
+        post["liked_by_me"] = post_id in liked_ids
+        post["saved_by_me"] = post_id in saved_ids
+
+    return posts
 
 
 @router.post("/posts", response_model=CommunityPostOut, status_code=201)
@@ -53,24 +126,68 @@ def publish(payload: CommunityPostCreate, db: DbSession, user: CurrentUser):
 
 @router.post("/posts/{post_id}/like")
 def like(post_id: int, db: DbSession, user: CurrentUser):
-    if not db.get(CommunityPost, post_id): raise HTTPException(404, "Post not found")
+    if not db.get(CommunityPost, post_id):
+        raise HTTPException(404, "Post not found")
+
     row = db.get(CommunityReaction, (post_id, user.id))
+
     if row:
-        db.delete(row); liked = False
+        db.delete(row)
+        liked = False
     else:
-        db.add(CommunityReaction(post_id=post_id, user_id=user.id)); liked = True
-    db.commit(); return {"liked": liked}
+        db.add(
+            CommunityReaction(
+                post_id=post_id,
+                user_id=user.id,
+            )
+        )
+        liked = True
+
+    db.commit()
+
+    like_count = db.scalar(
+        select(func.count())
+        .select_from(CommunityReaction)
+        .where(CommunityReaction.post_id == post_id)
+    )
+
+    return {
+        "liked": liked,
+        "like_count": int(like_count or 0),
+    }
 
 
 @router.post("/posts/{post_id}/save")
 def save(post_id: int, db: DbSession, user: CurrentUser):
-    if not db.get(CommunityPost, post_id): raise HTTPException(404, "Post not found")
+    if not db.get(CommunityPost, post_id):
+        raise HTTPException(404, "Post not found")
+
     row = db.get(CommunitySave, (post_id, user.id))
+
     if row:
-        db.delete(row); saved = False
+        db.delete(row)
+        saved = False
     else:
-        db.add(CommunitySave(post_id=post_id, user_id=user.id)); saved = True
-    db.commit(); return {"saved": saved}
+        db.add(
+            CommunitySave(
+                post_id=post_id,
+                user_id=user.id,
+            )
+        )
+        saved = True
+
+    db.commit()
+
+    save_count = db.scalar(
+        select(func.count())
+        .select_from(CommunitySave)
+        .where(CommunitySave.post_id == post_id)
+    )
+
+    return {
+        "saved": saved,
+        "save_count": int(save_count or 0),
+    }
 
 
 @router.post("/posts/{post_id}/fork")
