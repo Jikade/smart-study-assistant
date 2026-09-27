@@ -338,13 +338,13 @@ def generate_deck(
                 ],
                 json_mode=True,
                 temperature=0.0,
-                max_tokens=min(
-                    900,
-                    max(
-                        350,
-                        batch_target * 180,
-                    ),
-                ),
+                # Reliability hotfix:
+                # qwen may need more than the old 350-token floor
+                # even when only one replacement card is requested.
+                # A truncated JSON object is unusable, so keep the
+                # already-established 900-token ceiling as the fixed
+                # per-batch output budget.
+                max_tokens=900,
                 reasoning_effort="none",
             )
 
