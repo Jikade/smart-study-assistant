@@ -72,7 +72,7 @@ class QuizV5GenerateRequest(BaseModel):
     question_count: int = Field(
         default=5,
         ge=1,
-        le=50,
+        le=5,
     )
     difficulty: str = Field(
         default="MEDIUM",
@@ -110,7 +110,7 @@ class QuizV5PreviewRequest(BaseModel):
     question_count: int = Field(
         default=5,
         ge=1,
-        le=50,
+        le=5,
     )
     subject_family: str = Field(
         default="general",
