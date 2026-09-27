@@ -103,3 +103,5 @@ local_data/
 
 # Local patch backups
 app/services/*_before_*.py
+
+storage/exports/
