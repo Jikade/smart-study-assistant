@@ -5,8 +5,10 @@ from pathlib import Path
 
 from docx import Document as DocxDocument
 from reportlab.lib.pagesizes import A4
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -14,6 +16,36 @@ from app.core.config import get_settings
 from app.db.models import ExportJob, Flashcard, FlashcardDeck, Question, QuestionOption, Quiz, StudyPlan, StudyTask
 
 settings = get_settings()
+
+
+_PDF_FONT_NAME = "SSAUnicode"
+_PDF_FONT_CANDIDATES = (
+    Path("C:/Windows/Fonts/arial.ttf"),
+    Path("C:/Windows/Fonts/segoeui.ttf"),
+    Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+    Path("/usr/share/fonts/dejavu/DejaVuSans.ttf"),
+)
+
+
+def _register_pdf_unicode_font() -> str:
+    registered = set(pdfmetrics.getRegisteredFontNames())
+    if _PDF_FONT_NAME in registered:
+        return _PDF_FONT_NAME
+
+    for font_path in _PDF_FONT_CANDIDATES:
+        if font_path.is_file():
+            pdfmetrics.registerFont(
+                TTFont(
+                    _PDF_FONT_NAME,
+                    str(font_path),
+                )
+            )
+            return _PDF_FONT_NAME
+
+    raise RuntimeError(
+        "No Unicode TrueType font found for PDF export. "
+        "Install Arial, Segoe UI, or DejaVu Sans."
+    )
 
 
 def _resource_lines(db: Session, resource_type: str, resource_id: int, user_id: int) -> tuple[str, list[str]]:
@@ -65,12 +97,41 @@ def create_export(db: Session, user_id: int, resource_type: str, resource_id: in
                 doc.add_paragraph(line)
             doc.save(path)
         else:
+            font_name = _register_pdf_unicode_font()
             styles = getSampleStyleSheet()
-            story = [Paragraph(title, styles["Title"]), Spacer(1, 12)]
+
+            title_style = styles["Title"].clone("SSAUnicodeTitle")
+            title_style.fontName = font_name
+
+            body_style = styles["BodyText"].clone("SSAUnicodeBody")
+            body_style.fontName = font_name
+
+            story = [
+                Paragraph(
+                    title.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"),
+                    title_style,
+                ),
+                Spacer(1, 12),
+            ]
+
             for line in lines:
-                story.append(Paragraph(line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"), styles["BodyText"]))
+                escaped = (
+                    line.replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                )
+                story.append(
+                    Paragraph(
+                        escaped,
+                        body_style,
+                    )
+                )
                 story.append(Spacer(1, 6))
-            SimpleDocTemplate(str(path), pagesize=A4).build(story)
+
+            SimpleDocTemplate(
+                str(path),
+                pagesize=A4,
+            ).build(story)
         job.status = "COMPLETED"
         job.file_url = str(path.resolve())
         job.completed_at = datetime.now(timezone.utc)

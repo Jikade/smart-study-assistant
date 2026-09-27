@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -28,3 +31,22 @@ def export(payload: ExportRequest, db: DbSession, user: CurrentUser):
 def list_exports(db: DbSession, user: CurrentUser):
     rows = db.scalars(select(ExportJob).where(ExportJob.user_id == user.id).order_by(ExportJob.created_at.desc()).limit(100)).all()
     return [{"id": r.id, "resource_type": r.resource_type, "resource_id": r.resource_id, "file_format": r.file_format, "status": r.status, "file_url": r.file_url, "error_message": r.error_message, "created_at": r.created_at} for r in rows]
+
+@router.get("/{export_id}/download")
+def download_export(export_id: int, db: DbSession, user: CurrentUser):
+    job = db.get(ExportJob, export_id)
+    if not job or job.user_id != user.id:
+        raise HTTPException(404, "Export not found")
+    if job.status != "COMPLETED" or not job.file_url:
+        raise HTTPException(409, "Export is not ready")
+
+    path = Path(job.file_url)
+    if not path.is_file():
+        raise HTTPException(404, "Export file not found")
+
+    media_type = (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        if job.file_format == "DOCX"
+        else "application/pdf"
+    )
+    return FileResponse(path=str(path), filename=path.name, media_type=media_type)
