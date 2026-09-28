@@ -1,0 +1,13 @@
+.git
+.gitignore
+
+node_modules
+
+__pycache__
+*.pyc
+
+.env
+
+scripts/__pycache__
+
+*.log

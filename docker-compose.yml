@@ -1,0 +1,210 @@
+name: smart-study-assistant
+
+services:
+  db:
+    image: pgvector/pgvector:0.8.6-pg18-bookworm
+    container_name: ssa-db
+
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smartstudy_local_password}
+      POSTGRES_DB: smart_study_assistant
+
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./backend/database/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+
+    ports:
+      - "5432:5432"
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'PGPASSWORD=$$POSTGRES_PASSWORD psql -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB -tAc "SELECT to_regclass(''public.users'') IS NOT NULL" | grep -q t',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 10s
+
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ssa-ollama
+
+    volumes:
+      - ollama_data:/root/.ollama
+
+    ports:
+      - "11434:11434"
+
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+
+    restart: unless-stopped
+
+  ollama-pull-chat-base:
+    image: ollama/ollama:latest
+    container_name: ssa-ollama-pull-chat
+
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+
+    volumes:
+      - ollama_data:/root/.ollama
+
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+    command:
+      - pull
+      - qwen3:8b
+
+    restart: "no"
+
+  ollama-create-chat:
+    image: ollama/ollama:latest
+    container_name: ssa-ollama-create-chat
+
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+
+    volumes:
+      - ollama_data:/root/.ollama
+      - ./backend/Modelfile.qwen3-quiz:/models/Modelfile.qwen3-quiz:ro
+
+    depends_on:
+      ollama-pull-chat-base:
+        condition: service_completed_successfully
+
+    command:
+      - create
+      - qwen3-quiz
+      - -f
+      - /models/Modelfile.qwen3-quiz
+
+    restart: "no"
+
+  ollama-pull-embedding:
+    image: ollama/ollama:latest
+    container_name: ssa-ollama-pull-embedding
+
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+
+    volumes:
+      - ollama_data:/root/.ollama
+
+    depends_on:
+      ollama-create-chat:
+        condition: service_completed_successfully
+
+    command:
+      - pull
+      - embeddinggemma
+
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+
+    container_name: ssa-backend
+
+    environment:
+      APP_NAME: Smart Study Assistant API
+      ENVIRONMENT: development
+      DEBUG: "true"
+
+      API_V1_PREFIX: /api/v1
+
+      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-smartstudy_local_password}@db:5432/smart_study_assistant
+
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-smart-study-assistant-local-docker-secret-change-in-production}
+      ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+      REFRESH_TOKEN_EXPIRE_DAYS: "30"
+
+      CORS_ORIGINS: '["http://localhost:3000","http://localhost:5173","http://127.0.0.1:5173"]'
+
+      STORAGE_DIR: /app/storage/uploads
+      MAX_UPLOAD_MB: "30"
+
+      CHUNK_SIZE_CHARS: "1800"
+      CHUNK_OVERLAP_CHARS: "250"
+
+      RAG_TOP_K: "3"
+      RAG_MIN_SCORE: "0.30"
+
+      AI_PROVIDER: openai_compatible
+      AI_BASE_URL: http://ollama:11434/v1
+      AI_API_KEY: ""
+      AI_CHAT_MODEL: qwen3-quiz
+      AI_EMBEDDING_MODEL: embeddinggemma
+      AI_TIMEOUT_SECONDS: "300"
+
+      OCR_ENABLED: "true"
+      OCR_LANGUAGES: vie+eng
+      OCR_DPI: "200"
+      OCR_PAGE_MIN_CHARS: "30"
+      TESSDATA_DIR: /usr/share/tesseract-ocr/5/tessdata
+
+      TZ: Asia/Ho_Chi_Minh
+
+    volumes:
+      - backend_uploads:/app/storage/uploads
+      - backend_exports:/app/storage/exports
+
+    ports:
+      - "8000:8000"
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+      ollama-pull-embedding:
+        condition: service_completed_successfully
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=5)",
+        ]
+      interval: 10s
+      timeout: 8s
+      retries: 30
+      start_period: 20s
+
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+
+    container_name: ssa-frontend
+
+    ports:
+      - "5173:80"
+
+    depends_on:
+      backend:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  ollama_data:
+  backend_uploads:
+  backend_exports:

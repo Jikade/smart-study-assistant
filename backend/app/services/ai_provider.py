@@ -32,13 +32,15 @@ class AIProvider:
         json_mode: bool = False,
         temperature: float = 0.2,
         max_tokens: int | None = None,
-        reasoning_effort: Literal[
-            "none",
-            "low",
-            "medium",
-            "high",
-        ]
-        | None = None,
+        reasoning_effort: (
+            Literal[
+                "none",
+                "low",
+                "medium",
+                "high",
+            ]
+            | None
+        ) = None,
     ) -> AIChatResult:
         raise NotImplementedError
 
@@ -65,26 +67,25 @@ class DisabledAIProvider(AIProvider):
         json_mode: bool = False,
         temperature: float = 0.2,
         max_tokens: int | None = None,
-        reasoning_effort: Literal[
-            "none",
-            "low",
-            "medium",
-            "high",
-        ]
-        | None = None,
+        reasoning_effort: (
+            Literal[
+                "none",
+                "low",
+                "medium",
+                "high",
+            ]
+            | None
+        ) = None,
     ) -> AIChatResult:
         raise AIProviderError(
-            "AI_PROVIDER is disabled. "
-            "Configure an AI endpoint in .env."
+            "AI_PROVIDER is disabled. " "Configure an AI endpoint in .env."
         )
 
     def embeddings(
         self,
         texts: list[str],
     ) -> list[list[float]]:
-        raise AIProviderError(
-            "Embedding provider is disabled."
-        )
+        raise AIProviderError("Embedding provider is disabled.")
 
 
 class OpenAICompatibleProvider(AIProvider):
@@ -110,15 +111,11 @@ class OpenAICompatibleProvider(AIProvider):
 
     @property
     def can_chat(self) -> bool:
-        return bool(
-            settings.ai_chat_model
-        )
+        return bool(settings.ai_chat_model)
 
     @property
     def can_embed(self) -> bool:
-        return bool(
-            settings.ai_embedding_model
-        )
+        return bool(settings.ai_embedding_model)
 
     def _headers(
         self,
@@ -129,9 +126,7 @@ class OpenAICompatibleProvider(AIProvider):
         }
 
         if settings.ai_api_key:
-            headers["Authorization"] = (
-                f"Bearer {settings.ai_api_key}"
-            )
+            headers["Authorization"] = f"Bearer {settings.ai_api_key}"
 
         return headers
 
@@ -140,9 +135,7 @@ class OpenAICompatibleProvider(AIProvider):
     ) -> httpx.Timeout:
         return httpx.Timeout(
             connect=10.0,
-            read=float(
-                settings.ai_timeout_seconds
-            ),
+            read=float(settings.ai_timeout_seconds),
             write=30.0,
             pool=10.0,
         )
@@ -164,37 +157,23 @@ class OpenAICompatibleProvider(AIProvider):
         10.0.2.2 is included for Android-emulator setups.
         """
 
-        raw = (
-            settings.ai_base_url
-            or ""
-        ).strip()
+        raw = (settings.ai_base_url or "").strip()
 
         try:
-            parsed = urlparse(
-                raw
-            )
+            parsed = urlparse(raw)
         except ValueError:
             return False
 
-        hostname = (
-            parsed.hostname
-            or ""
-        ).lower()
+        hostname = (parsed.hostname or "").lower()
 
         port = parsed.port
 
-        return (
-            hostname
-            in {
-                "localhost",
-                "127.0.0.1",
-                "10.0.2.2",
-            }
-            and (
-                port is None
-                or port == 11434
-            )
-        )
+        return hostname in {
+            "localhost",
+            "127.0.0.1",
+            "10.0.2.2",
+            "ollama",
+        } and (port is None or port == 11434)
 
     def _ollama_root_url(
         self,
@@ -207,14 +186,9 @@ class OpenAICompatibleProvider(AIProvider):
             http://localhost:11434
         """
 
-        base = (
-            settings.ai_base_url
-            or ""
-        ).rstrip("/")
+        base = (settings.ai_base_url or "").rstrip("/")
 
-        if base.endswith(
-            "/v1"
-        ):
+        if base.endswith("/v1"):
             base = base[:-3]
 
         return base.rstrip("/")
@@ -230,19 +204,19 @@ class OpenAICompatibleProvider(AIProvider):
         json_mode: bool = False,
         temperature: float = 0.2,
         max_tokens: int | None = None,
-        reasoning_effort: Literal[
-            "none",
-            "low",
-            "medium",
-            "high",
-        ]
-        | None = None,
+        reasoning_effort: (
+            Literal[
+                "none",
+                "low",
+                "medium",
+                "high",
+            ]
+            | None
+        ) = None,
     ) -> AIChatResult:
 
         if not settings.ai_chat_model:
-            raise AIProviderError(
-                "AI_CHAT_MODEL is not configured"
-            )
+            raise AIProviderError("AI_CHAT_MODEL is not configured")
 
         # Local Ollama gets the native fast path.
         if self._is_local_ollama():
@@ -274,13 +248,15 @@ class OpenAICompatibleProvider(AIProvider):
         json_mode: bool,
         temperature: float,
         max_tokens: int | None,
-        reasoning_effort: Literal[
-            "none",
-            "low",
-            "medium",
-            "high",
-        ]
-        | None,
+        reasoning_effort: (
+            Literal[
+                "none",
+                "low",
+                "medium",
+                "high",
+            ]
+            | None
+        ),
     ) -> AIChatResult:
         """
         Native Ollama /api/chat.
@@ -293,68 +269,45 @@ class OpenAICompatibleProvider(AIProvider):
 
         # The current quiz/RAG workloads benefit from
         # deterministic non-thinking generation.
-        think_enabled = (
-            reasoning_effort
-            in {
-                "low",
-                "medium",
-                "high",
-            }
-        )
+        think_enabled = reasoning_effort in {
+            "low",
+            "medium",
+            "high",
+        }
 
         options: dict[
             str,
             Any,
         ] = {
-            "temperature": (
-                temperature
-            ),
+            "temperature": (temperature),
         }
 
         if max_tokens is not None:
-            options[
-                "num_predict"
-            ] = int(
-                max_tokens
-            )
+            options["num_predict"] = int(max_tokens)
 
         payload: dict[
             str,
             Any,
         ] = {
-            "model": (
-                settings.ai_chat_model
-            ),
+            "model": (settings.ai_chat_model),
             "messages": messages,
             "stream": False,
-            "think": (
-                think_enabled
-            ),
+            "think": (think_enabled),
             "options": options,
-
             # Keep the chat model warm for repeated
             # quiz/verifier calls.
             "keep_alive": "30m",
         }
 
         if json_mode:
-            payload[
-                "format"
-            ] = "json"
+            payload["format"] = "json"
 
-        url = (
-            f"{self._ollama_root_url()}"
-            "/api/chat"
-        )
+        url = f"{self._ollama_root_url()}" "/api/chat"
 
-        started = (
-            time.perf_counter()
-        )
+        started = time.perf_counter()
 
         try:
-            with httpx.Client(
-                timeout=self._timeout()
-            ) as client:
+            with httpx.Client(timeout=self._timeout()) as client:
                 response = client.post(
                     url,
                     headers=self._headers(),
@@ -375,14 +328,11 @@ class OpenAICompatibleProvider(AIProvider):
 
         except httpx.ConnectError as exc:
             raise AIProviderError(
-                "Cannot connect to Ollama at "
-                f"{self._ollama_root_url()}"
+                "Cannot connect to Ollama at " f"{self._ollama_root_url()}"
             ) from exc
 
         except httpx.HTTPStatusError as exc:
-            body = (
-                exc.response.text[:500]
-            )
+            body = exc.response.text[:500]
 
             raise AIProviderError(
                 "Ollama native chat HTTP error "
@@ -391,63 +341,31 @@ class OpenAICompatibleProvider(AIProvider):
             ) from exc
 
         except httpx.HTTPError as exc:
-            raise AIProviderError(
-                "Ollama native chat HTTP error: "
-                f"{exc}"
-            ) from exc
+            raise AIProviderError("Ollama native chat HTTP error: " f"{exc}") from exc
 
         except ValueError as exc:
             raise AIProviderError(
-                "Ollama native chat returned "
-                "invalid JSON"
+                "Ollama native chat returned " "invalid JSON"
             ) from exc
 
-        elapsed_ms = (
-            time.perf_counter()
-            - started
-        ) * 1000.0
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
 
-        message = (
-            data.get(
-                "message"
-            )
-            or {}
-        )
+        message = data.get("message") or {}
 
-        content = str(
-            message.get(
-                "content"
-            )
-            or ""
-        ).strip()
+        content = str(message.get("content") or "").strip()
 
         if not content:
-            raise AIProviderError(
-                "Ollama native chat returned "
-                "empty content"
-            )
+            raise AIProviderError("Ollama native chat returned " "empty content")
 
-        prompt_tokens = data.get(
-            "prompt_eval_count"
-        )
+        prompt_tokens = data.get("prompt_eval_count")
 
-        completion_tokens = data.get(
-            "eval_count"
-        )
+        completion_tokens = data.get("eval_count")
 
-        load_duration_ns = data.get(
-            "load_duration"
-        )
+        load_duration_ns = data.get("load_duration")
 
-        prompt_eval_duration_ns = (
-            data.get(
-                "prompt_eval_duration"
-            )
-        )
+        prompt_eval_duration_ns = data.get("prompt_eval_duration")
 
-        eval_duration_ns = data.get(
-            "eval_duration"
-        )
+        eval_duration_ns = data.get("eval_duration")
 
         def _ns_to_ms(
             value: Any,
@@ -462,24 +380,15 @@ class OpenAICompatibleProvider(AIProvider):
                 return None
 
             return round(
-                float(value)
-                / 1_000_000.0,
+                float(value) / 1_000_000.0,
                 2,
             )
 
-        load_ms = _ns_to_ms(
-            load_duration_ns
-        )
+        load_ms = _ns_to_ms(load_duration_ns)
 
-        prompt_eval_ms = (
-            _ns_to_ms(
-                prompt_eval_duration_ns
-            )
-        )
+        prompt_eval_ms = _ns_to_ms(prompt_eval_duration_ns)
 
-        eval_ms = _ns_to_ms(
-            eval_duration_ns
-        )
+        eval_ms = _ns_to_ms(eval_duration_ns)
 
         print(
             "[AI PERF] "
@@ -497,16 +406,9 @@ class OpenAICompatibleProvider(AIProvider):
 
         return AIChatResult(
             content=content,
-            model=(
-                data.get(
-                    "model"
-                )
-                or settings.ai_chat_model
-            ),
+            model=(data.get("model") or settings.ai_chat_model),
             prompt_tokens=(
-                int(
-                    prompt_tokens
-                )
+                int(prompt_tokens)
                 if isinstance(
                     prompt_tokens,
                     int,
@@ -514,9 +416,7 @@ class OpenAICompatibleProvider(AIProvider):
                 else None
             ),
             completion_tokens=(
-                int(
-                    completion_tokens
-                )
+                int(completion_tokens)
                 if isinstance(
                     completion_tokens,
                     int,
@@ -536,64 +436,41 @@ class OpenAICompatibleProvider(AIProvider):
         json_mode: bool,
         temperature: float,
         max_tokens: int | None,
-        reasoning_effort: Literal[
-            "none",
-            "low",
-            "medium",
-            "high",
-        ]
-        | None,
+        reasoning_effort: (
+            Literal[
+                "none",
+                "low",
+                "medium",
+                "high",
+            ]
+            | None
+        ),
     ) -> AIChatResult:
 
         payload: dict[
             str,
             Any,
         ] = {
-            "model": (
-                settings.ai_chat_model
-            ),
+            "model": (settings.ai_chat_model),
             "messages": messages,
-            "temperature": (
-                temperature
-            ),
+            "temperature": (temperature),
         }
 
         if max_tokens is not None:
-            payload[
-                "max_tokens"
-            ] = (
-                max_tokens
-            )
+            payload["max_tokens"] = max_tokens
 
         if reasoning_effort is not None:
-            payload[
-                "reasoning_effort"
-            ] = (
-                reasoning_effort
-            )
+            payload["reasoning_effort"] = reasoning_effort
 
         if json_mode:
-            payload[
-                "response_format"
-            ] = {
-                "type": (
-                    "json_object"
-                )
-            }
+            payload["response_format"] = {"type": ("json_object")}
 
-        url = (
-            f"{settings.ai_base_url.rstrip('/')}"
-            "/chat/completions"
-        )
+        url = f"{settings.ai_base_url.rstrip('/')}" "/chat/completions"
 
-        started = (
-            time.perf_counter()
-        )
+        started = time.perf_counter()
 
         try:
-            with httpx.Client(
-                timeout=self._timeout()
-            ) as client:
+            with httpx.Client(timeout=self._timeout()) as client:
                 response = client.post(
                     url,
                     headers=self._headers(),
@@ -613,71 +490,37 @@ class OpenAICompatibleProvider(AIProvider):
 
         except httpx.ConnectError as exc:
             raise AIProviderError(
-                "Cannot connect to AI server at "
-                f"{settings.ai_base_url}"
+                "Cannot connect to AI server at " f"{settings.ai_base_url}"
             ) from exc
 
         except httpx.HTTPStatusError as exc:
-            body = (
-                exc.response.text[:500]
-            )
+            body = exc.response.text[:500]
 
             raise AIProviderError(
-                "AI chat HTTP error "
-                f"{exc.response.status_code}: "
-                f"{body}"
+                "AI chat HTTP error " f"{exc.response.status_code}: " f"{body}"
             ) from exc
 
         except httpx.HTTPError as exc:
-            raise AIProviderError(
-                f"AI chat HTTP error: {exc}"
-            ) from exc
+            raise AIProviderError(f"AI chat HTTP error: {exc}") from exc
 
         except ValueError as exc:
-            raise AIProviderError(
-                "AI chat returned invalid JSON"
-            ) from exc
+            raise AIProviderError("AI chat returned invalid JSON") from exc
 
-        elapsed_ms = (
-            time.perf_counter()
-            - started
-        ) * 1000.0
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
 
-        choices = data.get(
-            "choices"
-        )
+        choices = data.get("choices")
 
         if not choices:
-            raise AIProviderError(
-                "AI chat response contains "
-                "no choices"
-            )
+            raise AIProviderError("AI chat response contains " "no choices")
 
-        message = (
-            choices[0].get(
-                "message"
-            )
-            or {}
-        )
+        message = choices[0].get("message") or {}
 
-        content = str(
-            message.get(
-                "content"
-            )
-            or ""
-        ).strip()
+        content = str(message.get("content") or "").strip()
 
         if not content:
-            raise AIProviderError(
-                "AI chat returned empty content"
-            )
+            raise AIProviderError("AI chat returned empty content")
 
-        usage = (
-            data.get(
-                "usage"
-            )
-            or {}
-        )
+        usage = data.get("usage") or {}
 
         print(
             "[AI PERF] "
@@ -688,22 +531,9 @@ class OpenAICompatibleProvider(AIProvider):
 
         return AIChatResult(
             content=content,
-            model=(
-                data.get(
-                    "model"
-                )
-                or settings.ai_chat_model
-            ),
-            prompt_tokens=(
-                usage.get(
-                    "prompt_tokens"
-                )
-            ),
-            completion_tokens=(
-                usage.get(
-                    "completion_tokens"
-                )
-            ),
+            model=(data.get("model") or settings.ai_chat_model),
+            prompt_tokens=(usage.get("prompt_tokens")),
+            completion_tokens=(usage.get("completion_tokens")),
         )
 
     # =====================================================
@@ -716,36 +546,24 @@ class OpenAICompatibleProvider(AIProvider):
     ) -> list[list[float]]:
 
         if not settings.ai_embedding_model:
-            raise AIProviderError(
-                "AI_EMBEDDING_MODEL "
-                "is not configured"
-            )
+            raise AIProviderError("AI_EMBEDDING_MODEL " "is not configured")
 
         if not texts:
             return []
 
         # Keep the already working OpenAI-compatible
         # embedding endpoint.
-        url = (
-            f"{settings.ai_base_url.rstrip('/')}"
-            "/embeddings"
-        )
+        url = f"{settings.ai_base_url.rstrip('/')}" "/embeddings"
 
         payload = {
-            "model": (
-                settings.ai_embedding_model
-            ),
+            "model": (settings.ai_embedding_model),
             "input": texts,
         }
 
-        started = (
-            time.perf_counter()
-        )
+        started = time.perf_counter()
 
         try:
-            with httpx.Client(
-                timeout=self._timeout()
-            ) as client:
+            with httpx.Client(timeout=self._timeout()) as client:
                 response = client.post(
                     url,
                     headers=self._headers(),
@@ -765,31 +583,22 @@ class OpenAICompatibleProvider(AIProvider):
 
         except httpx.ConnectError as exc:
             raise AIProviderError(
-                "Cannot connect to AI server at "
-                f"{settings.ai_base_url}"
+                "Cannot connect to AI server at " f"{settings.ai_base_url}"
             ) from exc
 
         except httpx.HTTPStatusError as exc:
-            body = (
-                exc.response.text[:500]
-            )
+            body = exc.response.text[:500]
 
             raise AIProviderError(
-                "Embedding HTTP error "
-                f"{exc.response.status_code}: "
-                f"{body}"
+                "Embedding HTTP error " f"{exc.response.status_code}: " f"{body}"
             ) from exc
 
         except httpx.HTTPError as exc:
-            raise AIProviderError(
-                "Embedding HTTP error: "
-                f"{exc}"
-            ) from exc
+            raise AIProviderError("Embedding HTTP error: " f"{exc}") from exc
 
         except ValueError as exc:
             raise AIProviderError(
-                "Embedding endpoint returned "
-                "invalid JSON"
+                "Embedding endpoint returned " "invalid JSON"
             ) from exc
 
         rows = sorted(
@@ -812,32 +621,22 @@ class OpenAICompatibleProvider(AIProvider):
                 f"{len(texts)} inputs"
             )
 
-        vectors: list[
-            list[float]
-        ] = []
+        vectors: list[list[float]] = []
 
         for row in rows:
-            vector = row.get(
-                "embedding"
-            )
+            vector = row.get("embedding")
 
             if not isinstance(
                 vector,
                 list,
             ):
                 raise AIProviderError(
-                    "Embedding response contains "
-                    "an invalid vector"
+                    "Embedding response contains " "an invalid vector"
                 )
 
-            vectors.append(
-                vector
-            )
+            vectors.append(vector)
 
-        elapsed_ms = (
-            time.perf_counter()
-            - started
-        ) * 1000.0
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
 
         print(
             "[AI PERF] "
@@ -852,10 +651,7 @@ class OpenAICompatibleProvider(AIProvider):
 
 def get_ai_provider() -> AIProvider:
 
-    if (
-        settings.ai_provider
-        == "openai_compatible"
-    ):
+    if settings.ai_provider == "openai_compatible":
         return OpenAICompatibleProvider()
 
     return DisabledAIProvider()
