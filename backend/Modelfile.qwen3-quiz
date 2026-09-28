@@ -1,0 +1,4 @@
+﻿FROM qwen3:8b
+
+PARAMETER num_ctx 2048
+PARAMETER temperature 0
