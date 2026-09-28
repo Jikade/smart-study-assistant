@@ -3837,3 +3837,57 @@ body.sidebar-drawer-open {
   align-self: end;
   margin-top: 20px;
 }
+
+/* =========================================================
+   VANTA BIRDS BACKGROUND
+   Không thay đổi màu nền gốc của project.
+   ========================================================= */
+
+#vanta-birds-bg {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+
+  pointer-events: none;
+
+  z-index: 0;
+}
+
+#vanta-birds-bg canvas {
+  display: block !important;
+
+  width: 100% !important;
+  height: 100% !important;
+
+  pointer-events: none !important;
+}
+
+/*
+ * Nội dung ứng dụng luôn nằm trên đàn chim.
+ */
+#app {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+}
+
+/*
+ * Toast và modal phải nằm cao hơn app.
+ */
+#toast-root,
+#modal-root {
+  position: relative;
+  z-index: 2;
+}
+
+/*
+ * Tôn trọng thiết lập giảm chuyển động
+ * của hệ điều hành.
+ */
+@media (prefers-reduced-motion: reduce) {
+  #vanta-birds-bg {
+    display: none;
+  }
+}
